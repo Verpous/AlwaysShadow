@@ -15,9 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "Resource.h"
-#include <windows.h>    // For winapi
-#include <stdio.h>		// For printing errors and such.
-#include <tchar.h>		// For dealing with unicode and ANSI strings.
+#include "defines.h"
+#include <windows.h>    // For winapi.
+#include <stdio.h>      // For printing errors and such.
+#include <tchar.h>      // For dealing with unicode and ANSI strings.
 
 #pragma region Macros
 
@@ -30,6 +31,9 @@
 // The WindowClass name of the main window.
 #define WC_MAINWINDOW TEXT("MainWindow")
 
+// Notification code for the tray icon. 0x8001 is used by TOGGLE_ACTIVE.
+#define TRAY_ICON_CALLBACK 0x8002
+
 #pragma endregion // Macros.
 
 static HWND mainWindowHandle = NULL;
@@ -40,64 +44,52 @@ static HICON programIcon = NULL;
 // Trying to use wWinMain causes the program to not compile. It's ok though, because we've got GetCommandLine() to get the line as unicode.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
-	fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
+    fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
 
-	if (!InitializeWindows(hInstance))
-	{
-		return -1;
-	}
+    InitializeWindows(hInstance);
+    HACCEL acceleratorHandle = LoadAccelerators(hInstance, MAKEINTRESOURCE(ACCELERATOR_TABLE_ID));
+    MSG msg = {0};
 
-	HACCEL acceleratorHandle = LoadAccelerators(hInstance, MAKEINTRESOURCE(ACCELERATOR_TABLE_ID));
-	MSG msg = {0};
+    // Entering our message loop.
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
+        if (!TranslateAccelerator(mainWindowHandle, acceleratorHandle, &msg))
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
 
-	// Entering our message loop.
-	while (GetMessage(&msg, NULL, 0, 0))
-	{
-		if (!TranslateAccelerator(mainWindowHandle, acceleratorHandle, &msg))
-		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
-	}
-
-	UninitializeWindows(hInstance);
-	return 0;
+    UninitializeWindows(hInstance);
+    return 0;
 }
 
-char InitializeWindows(HINSTANCE instanceHandle)
+void InitializeWindows(HINSTANCE instanceHandle)
 {
-	programIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
-
-	if (!RegisterClasses(instanceHandle))
-	{
-		return FALSE;
-	}
-
-	mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("ShadowplayFixer"), WS_MINIMIZE, 0, 0, 0, 0, NULL, NULL, NULL, NULL);		
-	return TRUE;
+    programIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
+    RegisterMainWindowClass(instanceHandle);
+    mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("ShadowplayFixer"), WS_MINIMIZE, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
 }
 
-char RegisterClasses(HINSTANCE instanceHandle)
+void RegisterMainWindowClass(HINSTANCE instanceHandle)
 {
-	return RegisterMainWindowClass(instanceHandle);
+    WNDCLASS mainWindowClass = {0};
+    mainWindowClass.hInstance = instanceHandle;
+    mainWindowClass.lpszClassName = WC_MAINWINDOW;
+    mainWindowClass.lpfnWndProc = MainWindowProcedure;
+    mainWindowClass.hIcon = programIcon;
+
+    // Registering this class. If it fails, we'll log it and end the program.
+    if (!RegisterClass(&mainWindowClass))
+    {
+        fprintf(stderr, "RegisterClass of main window failed with error code: 0x%lX\n", GetLastError());
+        exit(1);
+    }
 }
 
-char RegisterMainWindowClass(HINSTANCE instanceHandle)
+void UninitializeWindows(HINSTANCE instanceHandle)
 {
-	WNDCLASS mainWindowClass = {0};
-	mainWindowClass.hInstance = instanceHandle;
-	mainWindowClass.lpszClassName = WC_MAINWINDOW;
-	mainWindowClass.lpfnWndProc = MainWindowProcedure;
-	mainWindowClass.hIcon = programIcon;
-
-	// Registering this class. If it fails, we'll log it and end the program.
-	if (!RegisterClass(&mainWindowClass))
-	{
-		fprintf(stderr, "RegisterClass of main window failed with error code: 0x%lX", GetLastError());
-		return FALSE;
-	}
-
-	return TRUE;
+	UnregisterClass(WC_MAINWINDOW, instanceHandle);
 }
 
 #pragma endregion // Initialization.
@@ -106,46 +98,57 @@ char RegisterMainWindowClass(HINSTANCE instanceHandle)
 
 LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam)
 {
-	switch (msg)
-	{
-		case WM_CREATE:
-            // TODO (not sure if here but somewhere) - create system tray icon with toggle menu option. Start up thread which actually does the program's job.
-			return 0;
-		case WM_COMMAND:
-			return ProcessMainWindowCommand(windowHandle, wparam, lparam);
-		case WM_NOTIFY:
-			return ProcessNotification(wparam, (LPNMHDR)lparam);
-		case WM_CLOSE:
-			return DefWindowProc(windowHandle, msg, wparam, lparam); // TODO: close.
-		case WM_DESTROY:
-			PostQuitMessage(0);
-			return 0;
-		default:
-			return DefWindowProc(windowHandle, msg, wparam, lparam);
-	}
+    switch (msg)
+    {
+        case WM_CREATE:
+            AddNotificationIcon(windowHandle);
+            return 0;
+        case WM_COMMAND:
+            return ProcessMainWindowCommand(windowHandle, wparam, lparam);
+        case WM_CLOSE:
+            DestroyWindow(mainWindowHandle);
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        default:
+            return DefWindowProc(windowHandle, msg, wparam, lparam);
+    }
 }
 
 LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 {
-	switch (HIWORD(wparam))
-	{
-		case ACCELERATOR_SHORTCUT_PRESSED:
-		
-			// Generating a menu button pressed event same as for BN_CLICKED, but only when this is the active window.
-			if (GetActiveWindow() == windowHandle)
-			{
-				ProcessMainWindowCommand(windowHandle, NOTIF_CODIFY(LOWORD(wparam)), lparam);
-			}
+    switch (HIWORD(wparam))
+    {
+        case ACCELERATOR_SHORTCUT_PRESSED:
+        
+            // Generating a menu button pressed event same as for BN_CLICKED, but only when this is the active window.
+            if (GetActiveWindow() == windowHandle)
+            {
+                ProcessMainWindowCommand(windowHandle, NOTIF_CODIFY(LOWORD(wparam)), lparam);
+            }
 
-			break;
-		case TOGGLE_ACTIVE:
-			// TODO: toggle.
-			break;
-		default:
-			break;
-	}
+            break;
+        case TOGGLE_ACTIVE:
+            fprintf(stderr, "toggle\n");
+            // TODO: toggle.
+            break;
+        default:
+            break;
+    }
 
-	return 0;
+    return 0;
+}
+
+void AddNotificationIcon(HWND hwnd)
+{
+    // TODO: add tooltip with program's name and add menu with options to toggle and close.
+    NOTIFYICONDATA nid = { sizeof(nid) };
+    nid.hWnd = hwnd;
+    nid.uFlags = NIF_ICON;
+    nid.uID = 0;
+    nid.uCallbackMessage = TRAY_ICON_CALLBACK;
+    nid.hIcon = programIcon;
+    Shell_NotifyIcon(NIM_ADD, &nid);
 }
 
 #pragma endregion // MainWindow.
