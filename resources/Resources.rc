@@ -6,7 +6,7 @@ CONTEXT_MENU_ID MENU
 BEGIN
     POPUP ""
     BEGIN
-    MENUITEM "Disable ShadowplayFixer", TOGGLE_ACTIVE
+    MENUITEM "Disable AlwaysShadow", TOGGLE_ACTIVE
     MENUITEM "Exit", PROGRAM_EXIT
     END
 END

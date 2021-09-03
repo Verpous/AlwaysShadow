@@ -1,4 +1,4 @@
-# ShadowplayFixer - a program for forcing Shadowplay's Instant Replay to stay on.
+# AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
 # Copyright (C) 2020 Aviv Edery.
 
 # This program is free software: you can redistribute it and/or modify
@@ -35,7 +35,7 @@ OBJS += $(BIN)/main.o
 OBJS += $(BIN)/Resources.o
 OBJS += $(BIN)/fixer.o
 
-PROG=$(BIN)/ShadowplayFixer.exe
+PROG=$(BIN)/AlwaysShadow.exe
 
 .PHONY: all run runx clean
 

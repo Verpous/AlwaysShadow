@@ -1,4 +1,4 @@
-// ShadowplayFixer - a program for forcing Shadowplay's Instant Replay to stay on.
+// AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
 // Copyright (C) 2020 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
@@ -24,7 +24,7 @@
 #pragma region Macros
 
 // The name of this program.
-#define PROGRAM_NAME TEXT("ShadowplayFixer")
+#define PROGRAM_NAME TEXT("AlwaysShadow")
 
 // The WindowClass name of the main window.
 #define WC_MAINWINDOW TEXT("MainWindow")
