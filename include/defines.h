@@ -18,7 +18,7 @@ void ShowContextMenu(HWND hwnd, POINT pt);
 
 // fixer.c
 void* FixerLoop(void* arg);
-char IsInstantReplayOn();
+char IsInstantReplayOn(WCHAR* tempFilesPath);
 INPUT CreateInput(WORD scancode, char isDown);
 void ToggleInstantReplay();
 

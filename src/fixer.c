@@ -38,13 +38,28 @@ void* FixerLoop(void* arg)
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
+    WCHAR value[MAX_PATH];
+	DWORD bufsz = sizeof(value);
+	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), REG_BINARY, NULL, (PVOID)value, &bufsz);
+
+    if (ret != ERROR_SUCCESS)
+    {
+        fprintf(stderr, "Failed to fetch temp file path with error code 0x%lX", ret);
+        exit(1);
+    }
+    else
+    {
+        _ftprintf(stderr, value);
+    }
+    
+
     for (;;)
     {
         sleep(3);
 
         if (!isDisabled)
         {
-            if (!IsInstantReplayOn())
+            if (!IsInstantReplayOn(NULL))
             {
                 ToggleInstantReplay();
             }
@@ -54,8 +69,9 @@ void* FixerLoop(void* arg)
     return 0;
 }
 
-char IsInstantReplayOn()
+char IsInstantReplayOn(WCHAR* tempFilesPath)
 {
+    // We detect if Instant Replay is on by checking if its temp files exist.
     WIN32_FIND_DATA fileData;
     TCHAR filePath[MAX_PATH];
     _tcscpy(filePath, _tgetenv(TEXT("TEMP")));
@@ -83,7 +99,7 @@ INPUT CreateInput(WORD scancode, char isDown)
 
 void ToggleInstantReplay()
 {
-    // Simulating Alt+Shift+F10.
+    // Simulating Alt+Shift+F10 which toggles Instant Replay.
     INPUT inputs[6] = {};
     ZeroMemory(inputs, sizeof(inputs));
 
