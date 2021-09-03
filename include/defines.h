@@ -10,5 +10,8 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam);
 void AddNotificationIcon(HWND windowHandle);
 void RemoveNotificationIcon(HWND windowHandle);
+void ShowContextMenu(HWND hwnd, POINT pt);
+
+extern volatile char isDisabled;
 
 #endif

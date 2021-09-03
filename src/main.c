@@ -22,25 +22,20 @@
 
 #pragma region Macros
 
+// The name of this program.
 #define PROGRAM_NAME TEXT("ShadowplayFixer")
-
-// Takes a notification code and returns it as an HMENU that uses the high word so it works the same as system notification codes.
-#define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
-
-// The value in the HIWORD of wparam when windows sends a message about a shortcut from the accelerator table being pressed.
-#define ACCELERATOR_SHORTCUT_PRESSED 1
 
 // The WindowClass name of the main window.
 #define WC_MAINWINDOW TEXT("MainWindow")
-
-// Notification code for the tray icon. 0x8001 is used by TOGGLE_ACTIVE.
-#define TRAY_ICON_CALLBACK 0x8002
 
 // The UUID of the notification icon.
 #define TRAY_ICON_UUID 0x69
 
 #pragma endregion // Macros.
 
+volatile char isDisabled;
+
+static HINSTANCE instanceHandle = NULL;
 static HWND mainWindowHandle = NULL;
 static HICON programIcon = NULL;
 
@@ -50,19 +45,17 @@ static HICON programIcon = NULL;
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
     fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
+    instanceHandle = hInstance;
+    isDisabled = FALSE;
 
     InitializeWindows(hInstance);
-    HACCEL acceleratorHandle = LoadAccelerators(hInstance, MAKEINTRESOURCE(ACCELERATOR_TABLE_ID));
     MSG msg = {0};
 
     // Entering our message loop.
     while (GetMessage(&msg, NULL, 0, 0))
     {
-        if (!TranslateAccelerator(mainWindowHandle, acceleratorHandle, &msg))
-        {
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
-        }
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
 
     UninitializeWindows(hInstance);
@@ -94,7 +87,7 @@ void RegisterMainWindowClass(HINSTANCE instanceHandle)
 
 void UninitializeWindows(HINSTANCE instanceHandle)
 {
-	UnregisterClass(WC_MAINWINDOW, instanceHandle);
+    UnregisterClass(WC_MAINWINDOW, instanceHandle);
 }
 
 #pragma endregion // Initialization.
@@ -110,9 +103,22 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             return 0;
         case WM_COMMAND:
             return ProcessMainWindowCommand(windowHandle, wparam, lparam);
+        case TRAY_ICON_CALLBACK:
+            switch (LOWORD(lparam))
+            {
+                case NIN_SELECT:
+                case WM_CONTEXTMENU:
+                    {
+                        POINT const pt = { LOWORD(wparam), HIWORD(wparam) };
+                        ShowContextMenu(windowHandle, pt);
+                    }
+                    break;
+            }
+
+            return 0;
         case WM_CLOSE:
             RemoveNotificationIcon(windowHandle);
-            DestroyWindow(mainWindowHandle);
+            DestroyWindow(windowHandle);
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
@@ -123,23 +129,14 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 
 LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 {
-    switch (HIWORD(wparam))
+    switch (LOWORD(wparam))
     {
-        case ACCELERATOR_SHORTCUT_PRESSED:
-        
-            // Generating a menu button pressed event same as for BN_CLICKED, but only when this is the active window.
-            if (GetActiveWindow() == windowHandle)
-            {
-                ProcessMainWindowCommand(windowHandle, NOTIF_CODIFY(LOWORD(wparam)), lparam);
-            }
-
-            break;
         case TOGGLE_ACTIVE:
-            RemoveNotificationIcon(windowHandle);
-            fprintf(stderr, "toggle\n");
-            // TODO: toggle.
+            isDisabled = !isDisabled;
             break;
-        default:
+        case PROGRAM_EXIT:
+            RemoveNotificationIcon(windowHandle);
+            DestroyWindow(windowHandle);
             break;
     }
 
@@ -148,7 +145,6 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 
 void AddNotificationIcon(HWND windowHandle)
 {
-    // TODO: add menu with options to toggle and close.
     NOTIFYICONDATA nid = { sizeof(nid) };
     nid.hWnd = windowHandle;
     nid.uFlags = NIF_ICON | NIF_SHOWTIP | NIF_TIP | NIF_MESSAGE;
@@ -181,6 +177,47 @@ void RemoveNotificationIcon(HWND windowHandle)
     nid.uID = TRAY_ICON_UUID;
     nid.hIcon = programIcon;
     Shell_NotifyIcon(NIM_DELETE, &nid);
+}
+
+void ShowContextMenu(HWND windowHandle, POINT point)
+{
+    HMENU hMenu = LoadMenu(instanceHandle, MAKEINTRESOURCE(CONTEXT_MENU_ID));
+
+    if (hMenu)
+    {
+        HMENU hSubMenu = GetSubMenu(hMenu, 0);
+        if (hSubMenu)
+        {
+            // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
+            SetForegroundWindow(windowHandle);
+
+            // If the menu item has checked last time set its state to checked before the menu window shows up.
+            if (isDisabled)
+            {
+                MENUITEMINFO mi = { 0 };
+                mi.cbSize = sizeof(MENUITEMINFO);
+                mi.fMask = MIIM_STATE;
+                mi.fState = MF_CHECKED;
+                SetMenuItemInfo(hSubMenu, TOGGLE_ACTIVE, FALSE, &mi);
+            }
+
+            // Respect menu drop alignment.
+            UINT uFlags = TPM_RIGHTBUTTON;
+
+            if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0)
+            {
+                uFlags |= TPM_RIGHTALIGN;
+            }
+            else
+            {
+                uFlags |= TPM_LEFTALIGN;
+            }
+
+            TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
+        }
+
+        DestroyMenu(hMenu);
+    }
 }
 
 #pragma endregion // MainWindow.
