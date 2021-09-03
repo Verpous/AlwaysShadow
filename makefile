@@ -1,4 +1,4 @@
-# ShadowplayFixer - a program for modifying the weights of different frequencies in a wave file.
+# ShadowplayFixer - a program for forcing Shadowplay's Instant Replay to stay on.
 # Copyright (C) 2020 Aviv Edery.
 
 # This program is free software: you can redistribute it and/or modify
@@ -28,11 +28,12 @@ CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -D UNICODE -D _UNICO
 LFlags=-Wall -mwindows
 
 # Libraries that we link.
-LinkedLibs:= 
+LinkedLibs += -lpthread
 
 # Object files we generate and link.
 OBJS += $(BIN)/main.o
 OBJS += $(BIN)/Resources.o
+OBJS += $(BIN)/fixer.o
 
 PROG=$(BIN)/ShadowplayFixer.exe
 

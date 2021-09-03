@@ -1,4 +1,4 @@
-// ShadowplayFixer - a program for modifying the weights of different frequencies in a wave file.
+// ShadowplayFixer - a program for forcing Shadowplay's Instant Replay to stay on.
 // Copyright (C) 2020 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
@@ -19,6 +19,7 @@
 #include <windows.h>    // For winapi.
 #include <stdio.h>      // For printing errors and such.
 #include <tchar.h>      // For dealing with unicode and ANSI strings.
+#include <pthread.h>    // For multithreading.
 
 #pragma region Macros
 
@@ -38,6 +39,7 @@ volatile char isDisabled;
 static HINSTANCE instanceHandle = NULL;
 static HWND mainWindowHandle = NULL;
 static HICON programIcon = NULL;
+static pthread_t fixerThread = 0;
 
 #pragma region Initialization
 
@@ -99,6 +101,15 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
     switch (msg)
     {
         case WM_CREATE:
+            {
+                int ret;
+                if ((ret = pthread_create(&fixerThread, NULL, FixerLoop, NULL)) != 0)
+                {
+                    fprintf(stderr, "pthread_create failed with error code 0x%X", ret);
+                    exit(1);
+                }
+            }
+
             AddNotificationIcon(windowHandle);
             return 0;
         case WM_COMMAND:
@@ -118,7 +129,10 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             return 0;
         case WM_CLOSE:
             RemoveNotificationIcon(windowHandle);
+            pthread_cancel(fixerThread);
+            pthread_join(fixerThread, NULL);
             DestroyWindow(windowHandle);
+            return 0;
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;

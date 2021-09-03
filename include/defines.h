@@ -3,6 +3,10 @@
 
 #include <windows.h>
 
+// Globals.
+extern volatile char isDisabled;
+
+// main.c
 void InitializeWindows(HINSTANCE instanceHandle);
 void RegisterMainWindowClass(HINSTANCE instanceHandle);
 void UninitializeWindows(HINSTANCE instanceHandle);
@@ -12,6 +16,10 @@ void AddNotificationIcon(HWND windowHandle);
 void RemoveNotificationIcon(HWND windowHandle);
 void ShowContextMenu(HWND hwnd, POINT pt);
 
-extern volatile char isDisabled;
+// fixer.c
+void* FixerLoop(void* arg);
+char IsInstantReplayOn();
+INPUT CreateInput(WORD scancode, char isDown);
+void ToggleInstantReplay();
 
 #endif
