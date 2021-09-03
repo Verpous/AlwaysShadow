@@ -22,6 +22,8 @@
 
 #pragma region Macros
 
+#define PROGRAM_NAME TEXT("ShadowplayFixer")
+
 // Takes a notification code and returns it as an HMENU that uses the high word so it works the same as system notification codes.
 #define NOTIF_CODIFY(x) MAKEWPARAM(0, x)
 
@@ -33,6 +35,9 @@
 
 // Notification code for the tray icon. 0x8001 is used by TOGGLE_ACTIVE.
 #define TRAY_ICON_CALLBACK 0x8002
+
+// The UUID of the notification icon.
+#define TRAY_ICON_UUID 0x69
 
 #pragma endregion // Macros.
 
@@ -68,7 +73,7 @@ void InitializeWindows(HINSTANCE instanceHandle)
 {
     programIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
     RegisterMainWindowClass(instanceHandle);
-    mainWindowHandle = CreateWindow(WC_MAINWINDOW, TEXT("ShadowplayFixer"), WS_MINIMIZE, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+    mainWindowHandle = CreateWindow(WC_MAINWINDOW, PROGRAM_NAME, WS_MINIMIZE, 0, 0, 0, 0, 0, 0, 0, 0);
 }
 
 void RegisterMainWindowClass(HINSTANCE instanceHandle)
@@ -106,6 +111,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
         case WM_COMMAND:
             return ProcessMainWindowCommand(windowHandle, wparam, lparam);
         case WM_CLOSE:
+            RemoveNotificationIcon(windowHandle);
             DestroyWindow(mainWindowHandle);
         case WM_DESTROY:
             PostQuitMessage(0);
@@ -129,6 +135,7 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 
             break;
         case TOGGLE_ACTIVE:
+            RemoveNotificationIcon(windowHandle);
             fprintf(stderr, "toggle\n");
             // TODO: toggle.
             break;
@@ -139,16 +146,41 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
     return 0;
 }
 
-void AddNotificationIcon(HWND hwnd)
+void AddNotificationIcon(HWND windowHandle)
 {
-    // TODO: add tooltip with program's name and add menu with options to toggle and close.
+    // TODO: add menu with options to toggle and close.
     NOTIFYICONDATA nid = { sizeof(nid) };
-    nid.hWnd = hwnd;
-    nid.uFlags = NIF_ICON;
-    nid.uID = 0;
+    nid.hWnd = windowHandle;
+    nid.uFlags = NIF_ICON | NIF_SHOWTIP | NIF_TIP | NIF_MESSAGE;
+    nid.uID = TRAY_ICON_UUID;
     nid.uCallbackMessage = TRAY_ICON_CALLBACK;
     nid.hIcon = programIcon;
-    Shell_NotifyIcon(NIM_ADD, &nid);
+    _tcscpy_s(nid.szTip, sizeof(nid.szTip), PROGRAM_NAME);
+
+    if (!Shell_NotifyIcon(NIM_ADD, &nid))
+    {
+        fprintf(stderr, "Failed to create notification icon.\n");
+        exit(1);
+    }
+    
+    // NOTIFYICON_VERSION_4 is prefered
+    nid.uVersion = NOTIFYICON_VERSION_4;
+
+    if (!Shell_NotifyIcon(NIM_SETVERSION, &nid))
+    {
+        fprintf(stderr, "Failed to set notification icon version.\n");
+        exit(1);
+    }
+}
+
+void RemoveNotificationIcon(HWND windowHandle)
+{
+    NOTIFYICONDATA nid = { sizeof(nid) };
+    nid.hWnd = windowHandle;
+    nid.uFlags = NIF_ICON;
+    nid.uID = TRAY_ICON_UUID;
+    nid.hIcon = programIcon;
+    Shell_NotifyIcon(NIM_DELETE, &nid);
 }
 
 #pragma endregion // MainWindow.
