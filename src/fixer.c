@@ -31,6 +31,7 @@
 
 // TODO: Get shadowplay temp files path from registry (it's stored in Computer\HKEY_CURRENT_USER\SOFTWARE\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS\TempFilePath)
 // TODO: Get shadowplay toggle shortcut from registry (this may be harder to do, maybe just give up or let the user manually assign the same shortcut.)
+// TODO: Investigate potential conflicts with Netflix.
 
 void* FixerLoop(void* arg)
 {
@@ -56,7 +57,11 @@ void* FixerLoop(void* arg)
 char IsInstantReplayOn()
 {
     WIN32_FIND_DATA fileData;
-    HANDLE fileHandle = FindFirstFile(TEXT("C:\\Users\\edery\\AppData\\Local\\Temp\\9343b833-e7af-42ea-8a61-31bc41eefe2b\\Sha*.tmp"), &fileData);
+    TCHAR filePath[MAX_PATH];
+    _tcscpy(filePath, _tgetenv(TEXT("TEMP")));
+    _tcscat(filePath, TEXT("\\9343b833-e7af-42ea-8a61-31bc41eefe2b\\Sha*.tmp"));
+
+    HANDLE fileHandle = FindFirstFile(filePath, &fileData);
 
     if (fileHandle == INVALID_HANDLE_VALUE)
     {
