@@ -1,5 +1,3 @@
-# THIS PROGRAM IS A WORK IN PROGRESS. IT'S NOT DONE YET.
-
 # AlwaysShadow
 Shadowplay's Instant Replay feature is unreliable. You often find out it is turned off when you need it most. This is despite enabling the fact that it's supposed to run on startup. This is a simple Windows program which will make sure Instant Replay is on at all times.
 
@@ -26,5 +24,7 @@ To use this program you will need to turn on Desktop Capture in your GeForce Exp
 You can run "make clean" to empty the bin folder if you want to recompile everything.
 
 The makefile includes some additional targets which are explained inside the makefile via comments.
+
+
 
 I am not affiliated with NVidia in any way.
