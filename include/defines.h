@@ -19,8 +19,10 @@ char CheckOneInstance();
 
 // fixer.c
 void* FixerLoop(void* arg);
+void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof);
 char IsInstantReplayOn(WCHAR* tempFilesPath);
-INPUT CreateInput(WORD scancode, char isDown);
+INPUT* FetchToggleShortcut(UINT* arraySize);
+void CreateInput(INPUT* input, WORD vkey, char isDown);
 void ToggleInstantReplay();
 
 #endif

@@ -22,27 +22,50 @@
 
 #pragma region Macros
 
-// The name of this program.
-#define SCANCODE_LALT 0x38 
-#define SCANCODE_LSHIFT 0x2A
-#define SCANCODE_F10 0x44
-
+// This is the filder in the temp files path where recordings are saved (plus the file names with a wildcard).
 #define TEMP_PATH_SUFFIX L"9343b833-e7af-42ea-8a61-31bc41eefe2b\\Sha*.tmp"
 
 #pragma endregion // Macros.
 
-// TODO: Get shadowplay toggle shortcut from registry (this may be harder to do, maybe just give up or let the user manually assign the same shortcut.)
-// TODO: Investigate potential conflicts with Netflix.
+// TODO: allow the user to define a list of processes that cause this program to disable itself when they run. Probably identify them using their command line.
+// Using WMI sounds best because other methods are not guaranteed to always work by MS. Write it in other language if C is too inconvenient. Can use python with py2exe maybe?
+
 // TODO: popup error messages when the program crashes?
+// TODO: detect when not to work due to desktop capture being off?
 
 void* FixerLoop(void* arg)
 {
+    // Making thread cancellable.
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
     WCHAR tempFilesPath[MAX_PATH];
-	DWORD bufsz = sizeof(tempFilesPath);
-	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), RRF_RT_ANY, NULL, (PVOID)tempFilesPath, &bufsz);
+	FetchTempFilesPath(tempFilesPath, sizeof(tempFilesPath), _countof(tempFilesPath));
+
+    // The inputs array is never freed. Some would consider this a memory leak, I say it's ok since it will only ever not be needed anymore when the program exits.
+    UINT arraySize;
+    INPUT* inputs = FetchToggleShortcut(&arraySize);
+
+    for (;;)
+    {
+        sleep(5);
+
+        if (!isDisabled)
+        {
+            if (!IsInstantReplayOn(tempFilesPath))
+            {
+                ToggleInstantReplay(inputs, arraySize);
+            }
+        }
+    }
+
+    return 0;
+}
+
+// For some reason if we try to compute bufsz/sizeof(*buffer) instead of countof, wcscat fails.
+void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof)
+{
+	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), RRF_RT_ANY, NULL, (PVOID)buffer, &bufsz);
 
     if (ret != ERROR_SUCCESS)
     {
@@ -50,26 +73,11 @@ void* FixerLoop(void* arg)
         exit(1);
     }
     
-    if (wcscat_s(tempFilesPath, _countof(tempFilesPath), TEMP_PATH_SUFFIX) != 0)
+    if (wcscat_s(buffer, countof, TEMP_PATH_SUFFIX) != 0)
     {
         fprintf(stderr, "Failed to append file path suffix.\n");
         exit(1);
     }
-
-    for (;;)
-    {
-        sleep(3);
-
-        if (!isDisabled)
-        {
-            if (!IsInstantReplayOn(tempFilesPath))
-            {
-                ToggleInstantReplay();
-            }
-        }
-    }
-
-    return 0;
 }
 
 char IsInstantReplayOn(WCHAR* tempFilesPath)
@@ -87,28 +95,72 @@ char IsInstantReplayOn(WCHAR* tempFilesPath)
     return TRUE;
 }
 
-INPUT CreateInput(WORD scancode, char isDown)
+INPUT* FetchToggleShortcut(UINT* arraySize)
 {
-    INPUT input = { 0 };
-    input.type = INPUT_KEYBOARD;
-    input.ki.wScan = scancode;
-    input.ki.dwFlags = KEYEVENTF_SCANCODE | (isDown ? 0 : KEYEVENTF_KEYUP);
-    return input;
+    INPUT* shortcut;
+
+    DWORD hkeyCount;
+    DWORD bufsz = sizeof(hkeyCount);
+    LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("IRToggleHKeyCount"), RRF_RT_ANY, NULL, (PVOID)&hkeyCount, &bufsz);
+
+    // Defaulting to Alt+Shift+F10.
+    if (ret != ERROR_SUCCESS)
+    {
+        *arraySize = 3;
+        shortcut = calloc((*arraySize) * 2, sizeof(INPUT));
+        
+        CreateInput(shortcut + 0, VK_MENU, TRUE);
+        CreateInput(shortcut + 1, VK_SHIFT, TRUE);
+        CreateInput(shortcut + 2, VK_F10, TRUE);
+
+        CreateInput(shortcut + (*arraySize) + 0, VK_MENU, FALSE);
+        CreateInput(shortcut + (*arraySize) + 1, VK_SHIFT, FALSE);
+        CreateInput(shortcut + (*arraySize) + 2, VK_F10, FALSE);
+    }
+    else // Reading from registry.
+    {
+        *arraySize = hkeyCount;
+        shortcut = calloc((*arraySize) * 2, sizeof(INPUT));
+
+        // Reading each character of the shortcut from its own registry entry.
+        for (int i = 0; i < *arraySize; i++)
+        {
+            // Creating string of registry name (Should be IRToggleHKey0, IRToggleHKey1, etc.).
+            TCHAR valueName[256];
+            if (_sntprintf_s(valueName, _countof(valueName), _TRUNCATE, TEXT("IRToggleHKey%d"), i) == -1)
+            {
+                fprintf(stderr, "This shortcut must be hella long because I can't fit the number in this buffer!\n");
+                exit(1);
+            }
+
+            // Reading the registry entry.
+            DWORD vkey;
+            bufsz = sizeof(vkey);
+            ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), valueName, RRF_RT_ANY, NULL, (PVOID)&vkey, &bufsz);
+
+            if (ret != ERROR_SUCCESS)
+            {
+                fprintf(stderr, "Failed to read hotkey %d with error code 0x%lX\n", i, ret);
+                exit(1);
+            }
+
+            CreateInput(shortcut + i, *((WORD*)(&vkey)), TRUE);
+            CreateInput(shortcut + (*arraySize) + i, *((WORD*)(&vkey)), FALSE);
+        }
+    }
+
+    *arraySize *= 2;
+    return shortcut;
 }
 
-void ToggleInstantReplay()
+void CreateInput(INPUT* input, WORD vkey, char isDown)
 {
-    // Simulating Alt+Shift+F10 which toggles Instant Replay.
-    INPUT inputs[6] = {};
-    ZeroMemory(inputs, sizeof(inputs));
+    input->type = INPUT_KEYBOARD;
+    input->ki.wVk = vkey;
+    input->ki.dwFlags = isDown ? 0 : KEYEVENTF_KEYUP;
+}
 
-    inputs[0] = CreateInput(SCANCODE_LALT, TRUE);
-    inputs[1] = CreateInput(SCANCODE_LSHIFT, TRUE);
-    inputs[2] = CreateInput(SCANCODE_F10, TRUE);
-
-    inputs[3] = CreateInput(SCANCODE_LALT, FALSE);
-    inputs[4] = CreateInput(SCANCODE_LSHIFT, FALSE);
-    inputs[5] = CreateInput(SCANCODE_F10, FALSE);
-
-    SendInput(ARRAYSIZE(inputs), inputs, sizeof(INPUT));
+void ToggleInstantReplay(INPUT* inputs, UINT arraySize)
+{
+    SendInput(arraySize, inputs, sizeof(INPUT));
 }
