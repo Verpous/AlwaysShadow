@@ -1,7 +1,7 @@
 # THIS PROGRAM IS A WORK IN PROGRESS. IT'S NOT DONE YET.
 
 # AlwaysShadow
-Shadowplay's Instant Replay feature is unreliable. You often find out it is turned off when you need it most. This is despite enabling the feature which is supposed to launch it on startup. This is a simple Windows program which will make sure Instant Replay is on at all times.
+Shadowplay's Instant Replay feature is unreliable. You often find out it is turned off when you need it most. This is despite enabling the fact that it's supposed to run on startup. This is a simple Windows program which will make sure Instant Replay is on at all times.
 
 ### Usage instructions.
 Run AlwaysShadow.exe. I recommend [adding it to your startup programs](https://support.microsoft.com/en-us/windows/add-an-app-to-run-automatically-at-startup-in-windows-10-150da165-dcd9-7230-517b-cf3c295d89dd) so it will always be running when you turn on your computer. The program will make sure to turn Instant Replay back on should it ever turn off. Additionally, there is a system tray icon with options to disable or exit the program.
