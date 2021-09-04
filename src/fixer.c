@@ -29,7 +29,6 @@
 
 // TODO: allow the user to define a list of processes that cause this program to disable itself when they run. Probably identify them using their command line.
 // Using WMI sounds best because other methods are not guaranteed to always work by MS. Write it in other language if C is too inconvenient. Can use python with py2exe maybe?
-// TODO: auto turn on in-game overlay if it is turned off?
 
 volatile TCHAR* errorMsg = NULL;
 
