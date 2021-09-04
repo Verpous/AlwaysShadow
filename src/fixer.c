@@ -27,31 +27,34 @@
 #define SCANCODE_LSHIFT 0x2A
 #define SCANCODE_F10 0x44
 
+#define TEMP_PATH_SUFFIX L"9343b833-e7af-42ea-8a61-31bc41eefe2b\\Sha*.tmp"
+
 #pragma endregion // Macros.
 
-// TODO: Get shadowplay temp files path from registry (it's stored in Computer\HKEY_CURRENT_USER\SOFTWARE\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS\TempFilePath)
 // TODO: Get shadowplay toggle shortcut from registry (this may be harder to do, maybe just give up or let the user manually assign the same shortcut.)
 // TODO: Investigate potential conflicts with Netflix.
+// TODO: Force single instance.
 
 void* FixerLoop(void* arg)
 {
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
-    WCHAR value[MAX_PATH];
-	DWORD bufsz = sizeof(value);
-	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), REG_BINARY, NULL, (PVOID)value, &bufsz);
+    WCHAR tempFilesPath[MAX_PATH];
+	DWORD bufsz = sizeof(tempFilesPath);
+	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), RRF_RT_ANY, NULL, (PVOID)tempFilesPath, &bufsz);
 
     if (ret != ERROR_SUCCESS)
     {
-        fprintf(stderr, "Failed to fetch temp file path with error code 0x%lX", ret);
+        fprintf(stderr, "Failed to fetch temp file path with error code 0x%lX\n", ret);
         exit(1);
     }
-    else
-    {
-        _ftprintf(stderr, value);
-    }
     
+    if (wcscat_s(tempFilesPath, _countof(tempFilesPath), TEMP_PATH_SUFFIX) != 0)
+    {
+        fprintf(stderr, "Failed to append file path suffix.\n");
+        exit(1);
+    }
 
     for (;;)
     {
@@ -59,7 +62,7 @@ void* FixerLoop(void* arg)
 
         if (!isDisabled)
         {
-            if (!IsInstantReplayOn(NULL))
+            if (!IsInstantReplayOn(tempFilesPath))
             {
                 ToggleInstantReplay();
             }
@@ -73,11 +76,7 @@ char IsInstantReplayOn(WCHAR* tempFilesPath)
 {
     // We detect if Instant Replay is on by checking if its temp files exist.
     WIN32_FIND_DATA fileData;
-    TCHAR filePath[MAX_PATH];
-    _tcscpy(filePath, _tgetenv(TEXT("TEMP")));
-    _tcscat(filePath, TEXT("\\9343b833-e7af-42ea-8a61-31bc41eefe2b\\Sha*.tmp"));
-
-    HANDLE fileHandle = FindFirstFile(filePath, &fileData);
+    HANDLE fileHandle = FindFirstFile(tempFilesPath, &fileData);
 
     if (fileHandle == INVALID_HANDLE_VALUE)
     {

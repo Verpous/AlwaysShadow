@@ -165,7 +165,7 @@ void AddNotificationIcon(HWND windowHandle)
     nid.uID = TRAY_ICON_UUID;
     nid.uCallbackMessage = TRAY_ICON_CALLBACK;
     nid.hIcon = programIcon;
-    _tcscpy_s(nid.szTip, sizeof(nid.szTip), PROGRAM_NAME);
+    _tcscpy_s(nid.szTip, _countof(nid.szTip), PROGRAM_NAME);
 
     if (!Shell_NotifyIcon(NIM_ADD, &nid))
     {
