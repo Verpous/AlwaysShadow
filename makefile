@@ -20,7 +20,7 @@ SRC:=src
 
 # C compiler flags.
 # -Wno-unknown-pragmas gets rid of warnings about regions in the code.
-CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -D UNICODE -D _UNICODE
+CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -Wno-discarded-qualifiers -c -Iinclude -D UNICODE -D _UNICODE
 
 # Linker flags.
 # -mwindows makes it so when you run the program it doesn't open cmd.

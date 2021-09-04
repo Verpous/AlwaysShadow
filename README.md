@@ -8,7 +8,7 @@ For this program to work, you have to turn on In-Game Overlay in your GeForce Ex
 
 Note that some programs (namely Netflix) prevent Instant Replay from being active, which conflicts with this program. In the future there may be a feature for dealing with this, but for now, you will have to manually disable this program when running one of those programs, or disable the open/close Instant Replay notification in your GeForce Experience settings to hide the bug.
 
-This program depends on there being a shortcut to toggle Instant Replay on/off configured in your Geforce Experience settings. You can change the shortcut to whatever you like, but make sure not to leave it empty. If you do change your shortcut, you will need to exit and relaunch this program.
+If you do change your shortcut for toggling Instant Replay on/off in your GeForce Experience settings, you will need to exit and relaunch this program.
 
 Likewise, if you change the location where Instant Replay stores temp files, you will also need to exit and relaunch this program.
 
@@ -24,7 +24,5 @@ To use this program you will need to turn on Desktop Capture in your GeForce Exp
 You can run "make clean" to empty the bin folder if you want to recompile everything.
 
 The makefile includes some additional targets which are explained inside the makefile via comments.
-
-
 
 I am not affiliated with NVidia in any way.

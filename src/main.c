@@ -32,9 +32,13 @@
 // The UUID of the notification icon.
 #define TRAY_ICON_UUID 0x69
 
+// The ID of the timer for checking if the fixer thread has died.
+#define TIMER_ID 1
+
 #pragma endregion // Macros.
 
-volatile char isDisabled;
+volatile char isDisabled = FALSE;
+volatile char fixerDied = FALSE;
 
 static HINSTANCE instanceHandle = NULL;
 static HWND mainWindowHandle = NULL;
@@ -51,12 +55,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     if (!CheckOneInstance())
     {
-        fprintf(stderr, "Another instance is already running.\n");
-        exit(1);
+        Error(TEXT("Only one instance of AlwaysShadow is allowed."));
     }
 
     instanceHandle = hInstance;
-    isDisabled = FALSE;
 
     InitializeWindows(hInstance);
     MSG msg = {0};
@@ -91,7 +93,7 @@ void RegisterMainWindowClass(HINSTANCE instanceHandle)
     if (!RegisterClass(&mainWindowClass))
     {
         fprintf(stderr, "RegisterClass of main window failed with error code: 0x%lX\n", GetLastError());
-        exit(1);
+        Error(TEXT("There was an error when initializing the program. Quitting."));
     }
 }
 
@@ -134,11 +136,12 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
                 if ((ret = pthread_create(&fixerThread, NULL, FixerLoop, NULL)) != 0)
                 {
                     fprintf(stderr, "pthread_create failed with error code 0x%X", ret);
-                    exit(1);
+                    Error(TEXT("There was an error when initializing the program. Quitting."));
                 }
             }
 
             AddNotificationIcon(windowHandle);
+            SetTimer(windowHandle, TIMER_ID, 1000, NULL);
             return 0;
         case WM_COMMAND:
             return ProcessMainWindowCommand(windowHandle, wparam, lparam);
@@ -151,6 +154,20 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
                         POINT const pt = { LOWORD(wparam), HIWORD(wparam) };
                         ShowContextMenu(windowHandle, pt);
                     }
+                    break;
+            }
+
+            return 0;
+        case WM_TIMER:
+            switch (wparam)
+            {
+                case TIMER_ID:
+                    if (fixerDied)
+                    {
+                        KillTimer(windowHandle, TIMER_ID);
+                        Error(errorMsg);
+                    }
+
                     break;
             }
 
@@ -199,7 +216,7 @@ void AddNotificationIcon(HWND windowHandle)
     if (!Shell_NotifyIcon(NIM_ADD, &nid))
     {
         fprintf(stderr, "Failed to create notification icon.\n");
-        exit(1);
+        Error(TEXT("There was an error creating the system tray icon. Quitting."));
     }
     
     // NOTIFYICON_VERSION_4 is prefered
@@ -208,7 +225,7 @@ void AddNotificationIcon(HWND windowHandle)
     if (!Shell_NotifyIcon(NIM_SETVERSION, &nid))
     {
         fprintf(stderr, "Failed to set notification icon version.\n");
-        exit(1);
+        Error(TEXT("There was an error creating the system tray icon. Quitting."));
     }
 }
 
@@ -261,6 +278,12 @@ void ShowContextMenu(HWND windowHandle, POINT point)
 
         DestroyMenu(hMenu);
     }
+}
+
+void Error(TCHAR* msg)
+{
+    MessageBox(mainWindowHandle, msg == NULL ? TEXT("An unidentified error has occured. Quitting.") : msg, PROGRAM_NAME TEXT(" - Error"), MB_OK | MB_ICONERROR);
+    exit(1);
 }
 
 #pragma endregion // MainWindow.

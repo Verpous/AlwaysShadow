@@ -33,6 +33,8 @@
 // TODO: popup error messages when the program crashes?
 // TODO: auto turn on in-game overlay if it is turned off?
 
+volatile TCHAR* errorMsg = NULL;
+
 void* FixerLoop(void* arg)
 {
     // Making thread cancellable.
@@ -70,13 +72,13 @@ void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof)
     if (ret != ERROR_SUCCESS)
     {
         fprintf(stderr, "Failed to fetch temp file path with error code 0x%lX\n", ret);
-        exit(1);
+        ThreadError(TEXT("Failed to detect settings for identifying if Instant Replay is on. Quitting."));
     }
     
     if (wcscat_s(buffer, countof, TEMP_PATH_SUFFIX) != 0)
     {
         fprintf(stderr, "Failed to append file path suffix.\n");
-        exit(1);
+        ThreadError(TEXT("Failed to detect settings for identifying if Instant Replay is on. Quitting."));
     }
 }
 
@@ -130,7 +132,7 @@ INPUT* FetchToggleShortcut(UINT* arraySize)
             if (_sntprintf_s(valueName, _countof(valueName), _TRUNCATE, TEXT("IRToggleHKey%d"), i) == -1)
             {
                 fprintf(stderr, "This shortcut must be hella long because I can't fit the number in this buffer!\n");
-                exit(1);
+                ThreadError(TEXT("Failed to detect settings for being able to turn on Instant Replay. Quitting."));
             }
 
             // Reading the registry entry.
@@ -141,7 +143,7 @@ INPUT* FetchToggleShortcut(UINT* arraySize)
             if (ret != ERROR_SUCCESS)
             {
                 fprintf(stderr, "Failed to read hotkey %d with error code 0x%lX\n", i, ret);
-                exit(1);
+                ThreadError(TEXT("Failed to detect settings for being able to turn on Instant Replay. Quitting."));
             }
 
             CreateInput(shortcut + i, *((WORD*)(&vkey)), TRUE);
@@ -163,4 +165,19 @@ void CreateInput(INPUT* input, WORD vkey, char isDown)
 void ToggleInstantReplay(INPUT* inputs, UINT arraySize)
 {
     SendInput(arraySize, inputs, sizeof(INPUT));
+}
+
+void ThreadError(TCHAR* msg)
+{
+    size_t len = _tcslen(msg);
+    errorMsg = malloc((len + 1) * sizeof(*errorMsg));
+
+    if (errorMsg != NULL && _tcscpy_s(errorMsg, len + 1, msg) != 0)
+    {
+        free(errorMsg);
+        errorMsg = NULL;
+    }
+    
+    fixerDied = TRUE;
+    pthread_exit(NULL);
 }
