@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# C Compiler.
 CC:=gcc
 BIN:=bin
 SRC:=src
@@ -28,14 +27,14 @@ CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -c -Iinclude -D UNICODE -D _UNICO
 LFlags=-Wall -mwindows
 
 # Libraries that we link.
-LinkedLibs += -lpthread
+LIBS += -lpthread
 
 # Object files we generate and link.
 OBJS += $(BIN)/main.o
 OBJS += $(BIN)/Resources.o
 OBJS += $(BIN)/fixer.o
 
-PROG=$(BIN)/AlwaysShadow.exe
+PROG:=$(BIN)/AlwaysShadow.exe
 
 .PHONY: all run runx clean
 
@@ -53,15 +52,14 @@ clean:
 	rm -f $(BIN)/*
 
 # The following targets do the actual job of compiling and linking all the different files. You'll probably never run them directly.
-$(PROG): $(BIN) $(OBJS)
-	$(CC) $(LFlags) $(OBJS) $(LinkedLibs) -o $@
+$(PROG): $(OBJS) | $(BIN)
+	$(CC) $(LFlags) $(OBJS) $(LIBS) -o $@
+
+$(BIN)/%.o: $(SRC)/%.c | $(BIN)
+	$(CC) $(CFlags) -o $@ $<
+
+$(BIN)/%.o: resources/%.rc | $(BIN)
+	windres -Iinclude -o $@ $<
 
 $(BIN):
 	mkdir -p $(BIN)
-
-# Important that the source file be the first prerequisite.
-$(BIN)/%.o: $(SRC)/%.c $(BIN)
-	$(CC) $(CFlags) -o $@ $<
-
-$(BIN)/%.o: resources/%.rc $(BIN)
-	windres -Iinclude -o $@ $<
