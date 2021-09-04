@@ -15,6 +15,7 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 void AddNotificationIcon(HWND windowHandle);
 void RemoveNotificationIcon(HWND windowHandle);
 void ShowContextMenu(HWND hwnd, POINT pt);
+char CheckOneInstance();
 
 // fixer.c
 void* FixerLoop(void* arg);

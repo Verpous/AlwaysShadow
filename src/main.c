@@ -39,6 +39,7 @@ volatile char isDisabled;
 static HINSTANCE instanceHandle = NULL;
 static HWND mainWindowHandle = NULL;
 static HICON programIcon = NULL;
+static HANDLE eventHandle = NULL;
 static pthread_t fixerThread = 0;
 
 #pragma region Initialization
@@ -47,6 +48,13 @@ static pthread_t fixerThread = 0;
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
     fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
+
+    if (!CheckOneInstance())
+    {
+        fprintf(stderr, "Another instance is already running.\n");
+        exit(1);
+    }
+
     instanceHandle = hInstance;
     isDisabled = FALSE;
 
@@ -92,6 +100,26 @@ void UninitializeWindows(HINSTANCE instanceHandle)
     UnregisterClass(WC_MAINWINDOW, instanceHandle);
 }
 
+char CheckOneInstance()
+{
+    eventHandle = CreateEvent(NULL, FALSE, FALSE, TEXT("Global\\AlwaysShadowEvent"));
+
+    if (eventHandle == NULL)
+    {
+        CloseHandle(eventHandle); 
+        return FALSE;
+    }
+
+    if (GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        CloseHandle(eventHandle); 
+        eventHandle = NULL;
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 #pragma endregion // Initialization.
 
 #pragma region MainWindow
@@ -132,6 +160,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             pthread_cancel(fixerThread);
             pthread_join(fixerThread, NULL);
             DestroyWindow(windowHandle);
+            CloseHandle(eventHandle);
             return 0;
         case WM_DESTROY:
             PostQuitMessage(0);

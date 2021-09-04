@@ -34,6 +34,7 @@
 // TODO: Get shadowplay toggle shortcut from registry (this may be harder to do, maybe just give up or let the user manually assign the same shortcut.)
 // TODO: Investigate potential conflicts with Netflix.
 // TODO: Force single instance.
+// TODO: popup error messages when the program crashes?
 
 void* FixerLoop(void* arg)
 {
