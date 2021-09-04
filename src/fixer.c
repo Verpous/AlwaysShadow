@@ -31,7 +31,7 @@
 // Using WMI sounds best because other methods are not guaranteed to always work by MS. Write it in other language if C is too inconvenient. Can use python with py2exe maybe?
 
 // TODO: popup error messages when the program crashes?
-// TODO: detect when not to work due to desktop capture being off?
+// TODO: auto turn on in-game overlay if it is turned off?
 
 void* FixerLoop(void* arg)
 {
