@@ -59,7 +59,7 @@ void* FixerLoop(void* arg)
 
     for (;;)
     {
-        sleep(5);
+        sleep(10);
 
         if (isDisabled)
         {
