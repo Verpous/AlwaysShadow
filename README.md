@@ -24,7 +24,7 @@ You will need to exit and relaunch this program if you do one of the following t
 It is recommend to turn on Desktop Capture in your GeForce Experience settings otherwise Instant Replay will constantly be getting toggled on/off when you're in the desktop. If Desktop Capture being off is important to you, you can disable the open/close Instant Replay notification to at least hide the fact that the program is bugging out.
 
 ## Download
-You can download the compiled program from [here](https://github.com/Verpous/AlwaysShadow/releases). Alternatively, you can clone the repo and compile it yourself.
+You can download the compiled program [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.0/AlwaysShadow.zip). Alternatively, you can clone the repo and compile it yourself.
 
 ## Compilation instructions
 1. Install [MSYS2](https://www.msys2.org/)
