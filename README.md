@@ -6,13 +6,20 @@ Run AlwaysShadow.exe. I recommend [adding it to your startup programs](https://s
 
 For this program to work, you have to turn on In-Game Overlay in your GeForce Experience settings.
 
-Note that some programs (namely Netflix) prevent Instant Replay from being active, which conflicts with this program. In the future there may be a feature for dealing with this, but for now, you will have to manually disable this program when running one of those programs, or disable the open/close Instant Replay notification in your GeForce Experience settings to hide the bug.
+Some programs (namely Netflix) prevent Instant Replay from being active, which conflicts with this program. You can define a list of programs that will cause this program to disable itself while they are running. By default, that list includes only Netflix. To define your own list, create a file named **exactly** Whitelist.txt in the same folder where you run the executable. There is an example Whitelist.txt file with Netflix included in the repo. For every program you want to add to the list, add its command line to Whitelist.txt in its own line.
 
-If you do change your shortcut for toggling Instant Replay on/off in your GeForce Experience settings, you will need to exit and relaunch this program.
+To find out a program's command line, run it and go to the Task Manager. Right click the top bar and make sure "Command line" is enabled, like so:
 
-Likewise, if you change the location where Instant Replay stores temp files, you will also need to exit and relaunch this program.
+Once enabled, Task Manager will show each process's command line. Run the process you want to add to the list, find it in the Task Manager, and copy-paste its command line to your Whitelist.txt in its own line. 
 
-To use this program you will need to turn on Desktop Capture in your GeForce Experience settings otherwise Instant Replay will constantly be getting toggled on/off when you're in the desktop. If Desktop Capture being off is important to you, you can disable the open/close Instant Replay notification to at least hide the fact that the program is bugging out.
+Note that creating this file causes Netflix to no longer be filtered by default. You will have to add it to your list manually. The command line for Netflix is in the example Whitelist.txt file included in the repo (be aware that the line may be different on your PC).
+
+You will need to exit and relaunch this program if you do one of the following things:
+1. Change the shortcut for toggling Instant Replay on/off in your GeForce Experience settings
+2. Change the location where Instant Replay stores temp files
+3. Create, delete, or modify your Whitelist.txt file
+
+It is recommend to turn on Desktop Capture in your GeForce Experience settings otherwise Instant Replay will constantly be getting toggled on/off when you're in the desktop. If Desktop Capture being off is important to you, you can disable the open/close Instant Replay notification to at least hide the fact that the program is bugging out.
 
 ## Compilation instructions
 1. Install [MSYS2](https://www.msys2.org/)
