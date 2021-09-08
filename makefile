@@ -27,7 +27,10 @@ CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -Wno-discarded-qualifiers -c -Iin
 LFlags=-Wall -mwindows
 
 # Libraries that we link.
-LIBS += -lpthread
+LIBS += -lpthread 	# For multithreading.
+LIBS += -lwbemuuid 	# For WMI to get the command line of processes. 
+LIBS += -lole32 	# For COM to get the command line of processes.
+LIBS += -loleaut32	# For working with BSTRs.
 
 # Object files we generate and link.
 OBJS += $(BIN)/main.o

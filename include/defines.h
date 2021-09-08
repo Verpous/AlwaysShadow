@@ -22,11 +22,20 @@ void Error(TCHAR* msg);
 
 // fixer.c
 void* FixerLoop(void* arg);
+void ThreadError(TCHAR* msg);
+void ReleaseResources(void* arg);
+
 void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof);
 char IsInstantReplayOn(WCHAR* tempFilesPath);
-INPUT* FetchToggleShortcut(UINT* arraySize);
+
+INPUT* FetchToggleShortcut(size_t* ninputs);
 void CreateInput(INPUT* input, WORD vkey, char isDown);
 void ToggleInstantReplay();
-void ThreadError(TCHAR* msg);
+
+void InitializeWmi();
+BSTR* FetchWhitelist(size_t* nprocs);
+char WhitelistedProcessIsRunning(BSTR* procCmds, size_t nprocs);
+char* StripWhitespace(char* str);
+size_t StripWhitespaceBSTR(BSTR bstr, wchar_t** result);
 
 #endif
