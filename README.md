@@ -10,9 +10,11 @@ Some programs (namely Netflix) prevent Instant Replay from being active, which c
 
 To find out a program's command line, run it and go to the Task Manager. Right click the top bar and make sure "Command line" is enabled, like so:
 
+![Screenshot (44)](https://user-images.githubusercontent.com/30209851/132571330-e7a0415e-78b2-42d2-9607-4f8e8759c4cd.png)
+
 Once enabled, Task Manager will show each process's command line. Run the process you want to add to the list, find it in the Task Manager, and copy-paste its command line to your Whitelist.txt in its own line. 
 
-Note that creating this file causes Netflix to no longer be filtered by default. You will have to add it to your list manually. The command line for Netflix is in the example Whitelist.txt file included in the repo (be aware that the line may be different on your PC).
+Note that creating your own Whitelist.txt file causes Netflix to no longer be filtered unless you add it to your list manually. The command line for Netflix is in the example Whitelist.txt file included in the repo (be aware that the line may be different on your PC).
 
 You will need to exit and relaunch this program if you do one of the following things:
 1. Change the shortcut for toggling Instant Replay on/off in your GeForce Experience settings
