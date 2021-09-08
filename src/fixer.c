@@ -43,9 +43,6 @@ static IWbemServices* wbemServices = NULL;
 
 void* FixerLoop(void* arg)
 {
-    // Setting up cleanup function to happen when the thread exits or gets cancelled.
-    pthread_cleanup_push(ReleaseResources, NULL);
-
     // Making thread cancellable.
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -75,12 +72,13 @@ void* FixerLoop(void* arg)
         }
     }
     
-    pthread_cleanup_pop(TRUE);
     return 0;
 }
 
 void ThreadError(TCHAR* msg)
 {
+    ReleaseResources(NULL);
+    
     size_t len = _tcslen(msg);
     errorMsg = malloc((len + 1) * sizeof(*errorMsg));
 
@@ -96,8 +94,11 @@ void ThreadError(TCHAR* msg)
 
 void ReleaseResources(void* arg)
 {
-    fprintf(stderr, "HELLLOOOOOOO\n");
-    fflush(stderr);
+    // This program does a sloppy job of cleanup.
+    // When this thread has an error, we clean up its resources but not the main thread's.
+    // When the main thread has an error, we don't clean up shit.
+    // When the program exits normally, we clean up the main thread's shit, but not this thread's.
+    // But you know what? Fuck it.
     if (wbemServices != NULL) wbemServices->lpVtbl->Release(wbemServices);
     if (wbemLocator != NULL) wbemLocator->lpVtbl->Release(wbemLocator);
     if (comInitialized) CoUninitialize();
@@ -118,7 +119,7 @@ void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof)
 {
 	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), RRF_RT_ANY, NULL, (PVOID)buffer, &bufsz);
 
-    if (ret != ERROR_SUCCESS)
+    if (ret != ERROR_SUCCESS || TRUE)
     {
         fprintf(stderr, "Failed to fetch temp file path with error code 0x%lX\n", ret);
         ThreadError(TEXT("Failed to detect settings for identifying if Instant Replay is on. Quitting."));
