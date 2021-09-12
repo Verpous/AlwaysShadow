@@ -41,6 +41,10 @@ static char comInitialized = FALSE;
 static IWbemLocator* wbemLocator = NULL;
 static IWbemServices* wbemServices = NULL;
 
+// TODO: See about not triggering language switch (alt+shift) when pressing alt+shift+f10.
+// TODO: See about detecting that in-game overlay is off and notifying the user to turn it on.
+// TODO: See about detecting apps that are running but suspended.
+
 void* FixerLoop(void* arg)
 {
     // Making thread cancellable.
