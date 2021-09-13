@@ -24,8 +24,7 @@ CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -Wno-discarded-qualifiers -c -Iin
 
 # Linker flags.
 # -mwindows makes it so when you run the program it doesn't open cmd.
-# -static because some people have complained of getting an error due to missing libraries.
-LFlags=-Wall -mwindows -static
+LFlags=-Wall -mwindows
 
 # Libraries that we link.
 LIBS += -lpthread 	# For multithreading.
@@ -40,9 +39,13 @@ OBJS += $(BIN)/fixer.o
 
 PROG:=$(BIN)/AlwaysShadow.exe
 
-.PHONY: all run runx clean
+.PHONY: all static run runx clean
 
 all: $(PROG)
+
+# Some people have complained of getting an error due to missing libraries. This is for them.
+static: LFlags += -static
+static: $(PROG)
 
 # Compiles and runs. Output streams are redirected to a log.
 run: $(PROG) runx

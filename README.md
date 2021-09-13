@@ -1,5 +1,5 @@
 # AlwaysShadow
-Shadowplay's Instant Replay feature is unreliable. You often find out it is turned off when you need it most. This is despite enabling the fact that it's supposed to run on startup. This is a simple Windows program which will make sure Instant Replay is on at all times.
+Shadowplay's Instant Replay feature is unreliable. You often find out it is turned off when you need it most. This is despite the fact that it's supposed to run on startup. This is a simple Windows program which will make sure Instant Replay is on at all times.
 
 ## Usage instructions
 Run AlwaysShadow.exe. I recommend [adding it to your startup programs](https://support.microsoft.com/en-us/windows/add-an-app-to-run-automatically-at-startup-in-windows-10-150da165-dcd9-7230-517b-cf3c295d89dd) so it will always be running when you turn on your computer. The program will make sure to turn Instant Replay back on should it ever turn off. Additionally, there is a system tray icon with options to disable or exit the program.
@@ -24,7 +24,7 @@ You will need to exit and relaunch this program if you do one of the following t
 It is recommend to turn on Desktop Capture in your GeForce Experience settings otherwise Instant Replay will constantly be getting toggled on/off when you're in the desktop. If Desktop Capture being off is important to you, you can disable the open/close Instant Replay notification to at least hide the fact that the program is bugging out.
 
 ## Download
-You can download the compiled program [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.0/AlwaysShadow.zip). Alternatively, you can clone the repo and compile it yourself.
+You can download the compiled program [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.0/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. If you experience errors about missing libraries, try downloading the "static linking" version from there. And of course, you can always clone the repo and compile it yourself.
 
 ## Compilation instructions
 1. Install [MSYS2](https://www.msys2.org/)
