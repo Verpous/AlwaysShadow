@@ -24,7 +24,8 @@ CFlags=-Wall -Wno-comment -Wno-unknown-pragmas -Wno-discarded-qualifiers -c -Iin
 
 # Linker flags.
 # -mwindows makes it so when you run the program it doesn't open cmd.
-LFlags=-Wall -mwindows
+# -static because some people have complained of getting an error due to missing libraries.
+LFlags=-Wall -mwindows -static
 
 # Libraries that we link.
 LIBS += -lpthread 	# For multithreading.
