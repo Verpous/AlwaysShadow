@@ -16,6 +16,7 @@ char CheckOneInstance();
 LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam);
 UINT GetMilliseconds(int id);
+SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME* sysTime, UINT millis);
 void AddNotificationIcon(HWND windowHandle);
 void RemoveNotificationIcon(HWND windowHandle);
 void ShowContextMenu(HWND hwnd, POINT pt);

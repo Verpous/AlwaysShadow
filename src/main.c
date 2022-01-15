@@ -49,6 +49,7 @@ static HICON programIcon = NULL;
 static HANDLE eventHandle = NULL;
 static pthread_t fixerThread = 0;
 static UINT currentTimerDuration = 0;
+static SYSTEMTIME timerEndTime = { 0 };
 
 #pragma region Initialization
 
@@ -207,6 +208,8 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
         case DISABLE_4HR:
         case DISABLE_INDEFINITE:
             currentTimerDuration = GetMilliseconds(wparamLow);
+            GetLocalTime(&timerEndTime);
+            timerEndTime = AddMillisecondsToTime(&timerEndTime, currentTimerDuration);
 
             if (currentTimerDuration >= USER_TIMER_MINIMUM)
             {
@@ -255,6 +258,23 @@ UINT GetMilliseconds(int id)
         default:
             return 0; // Important to return something less than USER_TIMER_MINIMUM in this case.
     }
+}
+
+SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME* sysTime, UINT millis)
+{
+    FILETIME fileTime;
+    SYSTEMTIME result;
+    SystemTimeToFileTime(sysTime, &fileTime);
+
+    ULARGE_INTEGER largeInt; 
+    memcpy(&largeInt, &fileTime, sizeof(largeInt));
+
+    const ULONGLONG millisTo100nanos = 10000;
+    largeInt.QuadPart += millis * millisTo100nanos;
+
+    memcpy(&fileTime, &largeInt, sizeof(fileTime));
+    FileTimeToSystemTime(&fileTime, &result);
+    return result;
 }
 
 void AddNotificationIcon(HWND windowHandle)
@@ -361,12 +381,20 @@ void ShowDisabledContextMenu(HWND windowHandle, POINT point)
     // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
     SetForegroundWindow(windowHandle);
 
-    // TODO: Set text to indicate how long it's currently disabled for.
-    // MENUITEMINFO mi = { 0 };
-    // mi.cbSize = sizeof(MENUITEMINFO);
-    // mi.fMask = MIIM_TYPE;
-    // mi.dwTypeData = TEXT("Hello world");
-    // SetMenuItemInfo(hSubMenu, ENABLE_INDEFINITE, FALSE, &mi);
+    // If the timer's duration is 0 then it's disabled indefinitely and we don't need to write until when it's disabled.
+    if (currentTimerDuration > 0)
+    {
+        // Writing the text. End result should look like: "Enable AlwaysShadow (disabled until 18:32)"
+        TCHAR txt[256];
+        _stprintf_s(txt, sizeof(txt) / sizeof(*txt), TEXT("Enable AlwaysShadow (disabled until %u:%02u)"),
+            timerEndTime.wHour, timerEndTime.wMinute);
+
+        MENUITEMINFO mi = { 0 };
+        mi.cbSize = sizeof(MENUITEMINFO);
+        mi.fMask = MIIM_TYPE;
+        mi.dwTypeData = txt;
+        SetMenuItemInfo(hSubMenu, ENABLE_INDEFINITE, FALSE, &mi);
+    }
     
     // Respect menu drop alignment.
     UINT uFlags = TPM_RIGHTBUTTON;
