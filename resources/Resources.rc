@@ -2,11 +2,32 @@
 
 PROGRAM_ICON_ID ICON "icon.ico"
 
-CONTEXT_MENU_ID MENU
-BEGIN
+ENABLED_CONTEXT_MENU_ID MENU
+{
     POPUP ""
-    BEGIN
-    MENUITEM "Disable AlwaysShadow", TOGGLE_ACTIVE
-    MENUITEM "Exit", PROGRAM_EXIT
-    END
-END
+    {
+        POPUP "Disable AlwaysShadow"
+        {
+            MENUITEM "For 15 minutes", DISABLE_15MIN
+            MENUITEM "For 30 minutes", DISABLE_30MIN
+            MENUITEM "For 45 minutes", DISABLE_45MIN
+            MENUITEM "For 1 hour", DISABLE_1HR
+            MENUITEM "For 2 hours", DISABLE_2HR
+            MENUITEM "For 3 hours", DISABLE_3HR
+            MENUITEM "For 4 hours", DISABLE_4HR
+            MENUITEM "Custom duration", DISABLE_CUSTOM
+            MENUITEM "Until I turn it back on", DISABLE_INDEFINITE
+        }
+
+        MENUITEM "Exit", PROGRAM_EXIT
+    }
+}
+
+DISABLED_CONTEXT_MENU_ID MENU
+{
+    POPUP ""
+    {
+        MENUITEM "Enable AlwaysShadow", ENABLE_INDEFINITE
+        MENUITEM "Exit", PROGRAM_EXIT
+    }
+}

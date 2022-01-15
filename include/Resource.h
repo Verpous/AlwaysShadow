@@ -7,11 +7,21 @@
 // Nothing special about 101 except that Microsoft uses it in their example so why not.
 #define ACCELERATOR_TABLE_ID 101
 #define PROGRAM_ICON_ID 102
-#define CONTEXT_MENU_ID 103
+#define ENABLED_CONTEXT_MENU_ID 103
+#define DISABLED_CONTEXT_MENU_ID 104
 
 // The following are notification codes. Codes below 0x8000 are reserved by Windows.
-#define TOGGLE_ACTIVE 0x8001
 #define TRAY_ICON_CALLBACK 0x8002
 #define PROGRAM_EXIT 0x8003
+#define DISABLE_1HR 0x8004
+#define DISABLE_2HR 0x8005
+#define DISABLE_3HR 0x8006
+#define DISABLE_4HR 0x8007
+#define DISABLE_CUSTOM 0x8008
+#define DISABLE_INDEFINITE 0x8009
+#define ENABLE_INDEFINITE 0x800A
+#define DISABLE_15MIN 0x800B
+#define DISABLE_30MIN 0x800C
+#define DISABLE_45MIN 0x800D
 
 #endif
