@@ -15,9 +15,12 @@ void UninitializeWindows(HINSTANCE instanceHandle);
 char CheckOneInstance();
 LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam);
+UINT GetMilliseconds(int id);
 void AddNotificationIcon(HWND windowHandle);
 void RemoveNotificationIcon(HWND windowHandle);
 void ShowContextMenu(HWND hwnd, POINT pt);
+void ShowEnabledContextMenu(HWND windowHandle, POINT point);
+void ShowDisabledContextMenu(HWND windowHandle, POINT point);
 void Error(TCHAR* msg);
 
 // fixer.c

@@ -33,7 +33,10 @@
 #define TRAY_ICON_UUID 0x69
 
 // The ID of the timer for checking if the fixer thread has died.
-#define TIMER_ID 1
+#define CHECK_ALIVE_TIMER_ID 1
+
+// The ID of the timer for enabling AlwaysShadow after a set time.
+#define ENABLE_TIMER_ID 2
 
 #pragma endregion // Macros.
 
@@ -45,6 +48,7 @@ static HWND mainWindowHandle = NULL;
 static HICON programIcon = NULL;
 static HANDLE eventHandle = NULL;
 static pthread_t fixerThread = 0;
+static UINT currentTimerDuration = 0;
 
 #pragma region Initialization
 
@@ -106,15 +110,9 @@ char CheckOneInstance()
 {
     eventHandle = CreateEvent(NULL, FALSE, FALSE, TEXT("Global\\AlwaysShadowEvent"));
 
-    if (eventHandle == NULL)
+    if (eventHandle == NULL || GetLastError() == ERROR_ALREADY_EXISTS)
     {
-        CloseHandle(eventHandle); 
-        return FALSE;
-    }
-
-    if (GetLastError() == ERROR_ALREADY_EXISTS)
-    {
-        CloseHandle(eventHandle); 
+        CloseHandle(eventHandle);
         eventHandle = NULL;
         return FALSE;
     }
@@ -141,7 +139,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             }
 
             AddNotificationIcon(windowHandle);
-            SetTimer(windowHandle, TIMER_ID, 1000, NULL);
+            SetTimer(windowHandle, CHECK_ALIVE_TIMER_ID, 1000, NULL);
             return 0;
         case WM_COMMAND:
             return ProcessMainWindowCommand(windowHandle, wparam, lparam);
@@ -161,13 +159,17 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
         case WM_TIMER:
             switch (wparam)
             {
-                case TIMER_ID:
+                case CHECK_ALIVE_TIMER_ID:
                     if (fixerDied)
                     {
-                        KillTimer(windowHandle, TIMER_ID);
+                        KillTimer(windowHandle, CHECK_ALIVE_TIMER_ID);
                         Error(errorMsg);
                     }
 
+                    break;
+                case ENABLE_TIMER_ID:
+                    KillTimer(windowHandle, ENABLE_TIMER_ID);
+                    isDisabled = FALSE;
                     break;
             }
 
@@ -189,10 +191,34 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
 
 LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 {
-    switch (LOWORD(wparam))
+    WORD wparamLow = LOWORD(wparam);
+
+    switch (wparamLow)
     {
-        case TOGGLE_ACTIVE:
-            isDisabled = !isDisabled;
+        case DISABLE_CUSTOM:
+            // TODO: this.
+            break;
+        case DISABLE_15MIN:
+        case DISABLE_30MIN:
+        case DISABLE_45MIN:
+        case DISABLE_1HR:
+        case DISABLE_2HR:
+        case DISABLE_3HR:
+        case DISABLE_4HR:
+        case DISABLE_INDEFINITE:
+            currentTimerDuration = GetMilliseconds(wparamLow);
+
+            if (currentTimerDuration >= USER_TIMER_MINIMUM)
+            {
+                SetTimer(windowHandle, ENABLE_TIMER_ID, currentTimerDuration, NULL);
+            }
+
+            isDisabled = TRUE;
+            break;
+        case ENABLE_INDEFINITE:
+            // If there is no timer it's no harm done.
+            KillTimer(windowHandle, ENABLE_TIMER_ID);
+            isDisabled = FALSE;
             break;
         case PROGRAM_EXIT:
             RemoveNotificationIcon(windowHandle);
@@ -201,6 +227,34 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
     }
 
     return 0;
+}
+
+// Translates a notification code to a milliseconds duration.
+UINT GetMilliseconds(int id)
+{
+    // Everything's measured in milliseconds.
+    const UINT minute = 60 * 1000;
+    const UINT hour = 60 * minute;
+
+    switch (id)
+    {
+        case DISABLE_15MIN:
+            return 15 * minute;
+        case DISABLE_30MIN:
+            return 30 * minute;
+        case DISABLE_45MIN:
+            return 45 * minute;
+        case DISABLE_1HR:
+            return 1 * hour;
+        case DISABLE_2HR:
+            return 2 * hour;
+        case DISABLE_3HR:
+            return 3 * hour;
+        case DISABLE_4HR:
+            return 4 * hour;
+        default:
+            return 0; // Important to return something less than USER_TIMER_MINIMUM in this case.
+    }
 }
 
 void AddNotificationIcon(HWND windowHandle)
@@ -219,7 +273,7 @@ void AddNotificationIcon(HWND windowHandle)
         Error(TEXT("There was an error creating the system tray icon. Quitting."));
     }
     
-    // NOTIFYICON_VERSION_4 is prefered
+    // NOTIFYICON_VERSION_4 is preferred
     nid.uVersion = NOTIFYICON_VERSION_4;
 
     if (!Shell_NotifyIcon(NIM_SETVERSION, &nid))
@@ -241,43 +295,95 @@ void RemoveNotificationIcon(HWND windowHandle)
 
 void ShowContextMenu(HWND windowHandle, POINT point)
 {
-    HMENU hMenu = LoadMenu(instanceHandle, MAKEINTRESOURCE(CONTEXT_MENU_ID));
-
-    if (hMenu)
+    if (isDisabled)
     {
-        HMENU hSubMenu = GetSubMenu(hMenu, 0);
-        if (hSubMenu)
-        {
-            // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
-            SetForegroundWindow(windowHandle);
-
-            // If the menu item has checked last time set its state to checked before the menu window shows up.
-            if (isDisabled)
-            {
-                MENUITEMINFO mi = { 0 };
-                mi.cbSize = sizeof(MENUITEMINFO);
-                mi.fMask = MIIM_STATE;
-                mi.fState = MF_CHECKED;
-                SetMenuItemInfo(hSubMenu, TOGGLE_ACTIVE, FALSE, &mi);
-            }
-
-            // Respect menu drop alignment.
-            UINT uFlags = TPM_RIGHTBUTTON;
-
-            if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0)
-            {
-                uFlags |= TPM_RIGHTALIGN;
-            }
-            else
-            {
-                uFlags |= TPM_LEFTALIGN;
-            }
-
-            TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
-        }
-
-        DestroyMenu(hMenu);
+        ShowDisabledContextMenu(windowHandle, point);
     }
+    else
+    {
+        ShowEnabledContextMenu(windowHandle, point);
+    }
+}
+
+void ShowEnabledContextMenu(HWND windowHandle, POINT point)
+{
+    HMENU hMenu = LoadMenu(instanceHandle, MAKEINTRESOURCE(ENABLED_CONTEXT_MENU_ID));
+
+    if (!hMenu)
+    {
+        return;
+    }
+
+    HMENU hSubMenu = GetSubMenu(hMenu, 0);
+
+    if (!hSubMenu)
+    {
+        goto cleanup;
+    }
+
+    // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
+    SetForegroundWindow(windowHandle);
+
+    // Respect menu drop alignment.
+    UINT uFlags = TPM_RIGHTBUTTON;
+
+    if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0)
+    {
+        uFlags |= TPM_RIGHTALIGN;
+    }
+    else
+    {
+        uFlags |= TPM_LEFTALIGN;
+    }
+
+    TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
+
+cleanup:
+    DestroyMenu(hMenu);
+}
+
+void ShowDisabledContextMenu(HWND windowHandle, POINT point)
+{
+    HMENU hMenu = LoadMenu(instanceHandle, MAKEINTRESOURCE(DISABLED_CONTEXT_MENU_ID));
+
+    if (!hMenu)
+    {
+        return;
+    }
+
+    HMENU hSubMenu = GetSubMenu(hMenu, 0);
+
+    if (!hSubMenu)
+    {
+        goto cleanup;
+    }
+
+    // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
+    SetForegroundWindow(windowHandle);
+
+    // TODO: Set text to indicate how long it's currently disabled for.
+    // MENUITEMINFO mi = { 0 };
+    // mi.cbSize = sizeof(MENUITEMINFO);
+    // mi.fMask = MIIM_TYPE;
+    // mi.dwTypeData = TEXT("Hello world");
+    // SetMenuItemInfo(hSubMenu, ENABLE_INDEFINITE, FALSE, &mi);
+    
+    // Respect menu drop alignment.
+    UINT uFlags = TPM_RIGHTBUTTON;
+
+    if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0)
+    {
+        uFlags |= TPM_RIGHTALIGN;
+    }
+    else
+    {
+        uFlags |= TPM_LEFTALIGN;
+    }
+
+    TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
+
+cleanup:
+    DestroyMenu(hMenu);
 }
 
 void Error(TCHAR* msg)
