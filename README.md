@@ -26,7 +26,7 @@ It is recommend to turn on Desktop Capture in your GeForce Experience settings o
 AlwaysShadow turns on Instant Replay by simulating the keypresses for the shortcut that toggles it in GeForce Experience, which by default is Alt+Shift+F10. This may cause AlwaysShadow to change your keyboard language because the default shortcut for cycling between languages in Windows is Alt+Shift. To resolve this issue, it is recommended to go to your GeForce Experience settings and change the shortcut for toggling Instant Replay. I use Ctrl+Shift+F10. Remember that after changing the shortcut you will need to exit and relaunch this program.
 
 ## Download
-You can download the compiled program [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.0/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. And of course, you can always clone the repo and compile it yourself.
+You can download the compiled program [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.1/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. And of course, you can always clone the repo and compile it yourself.
 
 ## Compilation instructions
 1. Install [MSYS2](https://www.msys2.org/)
