@@ -9,6 +9,12 @@
 #define PROGRAM_ICON_ID 102
 #define ENABLED_CONTEXT_MENU_ID 103
 #define DISABLED_CONTEXT_MENU_ID 104
+#define TIME_PICKER_ID 105
+#define SECONDS_LISTBOX_ID 106
+#define MINUTES_LISTBOX_ID 107
+#define HOURS_LISTBOX_ID 108
+#define APPLY_PICKER_BTN_ID 109
+#define CANCEL_PICKER_BTN_ID 110
 
 // The following are notification codes. Codes below 0x8000 are reserved by Windows.
 #define TRAY_ICON_CALLBACK 0x8002
