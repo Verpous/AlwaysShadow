@@ -3,6 +3,12 @@
 
 #include <windows.h>
 
+typedef struct
+{
+    UINT amount;
+    LPTSTR text;
+} TimeOption;
+
 // Globals.
 extern volatile char isDisabled;
 extern volatile char fixerDied;
@@ -23,6 +29,9 @@ void ShowContextMenu(HWND hwnd, POINT pt);
 void ShowEnabledContextMenu(HWND windowHandle, POINT point);
 void ShowDisabledContextMenu(HWND windowHandle, POINT point);
 void Error(TCHAR* msg);
+INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+void FillListbox(HWND dialog, int id, TimeOption* items, size_t nitems);
+int GetSelection(HWND dialog, int id);
 
 // fixer.c
 void* FixerLoop(void* arg);

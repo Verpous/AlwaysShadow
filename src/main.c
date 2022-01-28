@@ -38,7 +38,37 @@
 // The ID of the timer for enabling AlwaysShadow after a set time.
 #define ENABLE_TIMER_ID 2
 
+#define MAKE_TIME_OPTION(t) { .amount = t, .text = TEXT(#t) }
+
+// Everything's measured in milliseconds.
+#define SECOND 1000u
+#define MINUTE (60u * SECOND)
+#define HOUR (60u * MINUTE)
+
 #pragma endregion // Macros.
+
+#pragma region Variables
+
+const TimeOption seconds[] =
+{
+    MAKE_TIME_OPTION(0), MAKE_TIME_OPTION(5), MAKE_TIME_OPTION(10), MAKE_TIME_OPTION(15),MAKE_TIME_OPTION(20), MAKE_TIME_OPTION(25),
+    MAKE_TIME_OPTION(30), MAKE_TIME_OPTION(35), MAKE_TIME_OPTION(40), MAKE_TIME_OPTION(45), MAKE_TIME_OPTION(50), MAKE_TIME_OPTION(55),
+};
+
+const TimeOption minutes[] = 
+{
+    MAKE_TIME_OPTION(0), MAKE_TIME_OPTION(5), MAKE_TIME_OPTION(10), MAKE_TIME_OPTION(15),MAKE_TIME_OPTION(20), MAKE_TIME_OPTION(25),
+    MAKE_TIME_OPTION(30), MAKE_TIME_OPTION(35), MAKE_TIME_OPTION(40), MAKE_TIME_OPTION(45), MAKE_TIME_OPTION(50), MAKE_TIME_OPTION(55),
+};
+
+const TimeOption hours[] =
+{
+    MAKE_TIME_OPTION(0), MAKE_TIME_OPTION(1), MAKE_TIME_OPTION(2), MAKE_TIME_OPTION(3), MAKE_TIME_OPTION(4),
+    MAKE_TIME_OPTION(5), MAKE_TIME_OPTION(6), MAKE_TIME_OPTION(7), MAKE_TIME_OPTION(8), MAKE_TIME_OPTION(9),
+    MAKE_TIME_OPTION(10), MAKE_TIME_OPTION(11), MAKE_TIME_OPTION(12), MAKE_TIME_OPTION(13), MAKE_TIME_OPTION(14),
+    MAKE_TIME_OPTION(15), MAKE_TIME_OPTION(16), MAKE_TIME_OPTION(17), MAKE_TIME_OPTION(18), MAKE_TIME_OPTION(19),
+    MAKE_TIME_OPTION(20), MAKE_TIME_OPTION(21), MAKE_TIME_OPTION(22), MAKE_TIME_OPTION(23),
+};
 
 volatile char isDisabled = FALSE;
 volatile char fixerDied = FALSE;
@@ -50,6 +80,9 @@ static HANDLE eventHandle = NULL;
 static pthread_t fixerThread = 0;
 static UINT currentTimerDuration = 0;
 static SYSTEMTIME timerEndTime = { 0 };
+static BOOL inDialog = FALSE;
+
+#pragma endregion // Variables.
 
 #pragma region Initialization
 
@@ -197,7 +230,22 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
     switch (wparamLow)
     {
         case DISABLE_CUSTOM:
-            // TODO: this.
+            inDialog = TRUE;
+            currentTimerDuration = DialogBox(instanceHandle, MAKEINTRESOURCE(TIME_PICKER_ID), windowHandle, TimePickerProc);
+            inDialog = FALSE;
+
+            if (currentTimerDuration > USER_TIMER_MINIMUM)
+            {
+                GetLocalTime(&timerEndTime);
+                timerEndTime = AddMillisecondsToTime(&timerEndTime, currentTimerDuration);
+
+                if (currentTimerDuration >= USER_TIMER_MINIMUM)
+                {
+                    SetTimer(windowHandle, ENABLE_TIMER_ID, currentTimerDuration, NULL);
+                    isDisabled = TRUE;
+                }
+            }
+
             break;
         case DISABLE_15MIN:
         case DISABLE_30MIN:
@@ -235,26 +283,22 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 // Translates a notification code to a milliseconds duration.
 UINT GetMilliseconds(int id)
 {
-    // Everything's measured in milliseconds.
-    const UINT minute = 60 * 1000;
-    const UINT hour = 60 * minute;
-
     switch (id)
     {
         case DISABLE_15MIN:
-            return 15 * minute;
+            return 15 * MINUTE;
         case DISABLE_30MIN:
-            return 30 * minute;
+            return 30 * MINUTE;
         case DISABLE_45MIN:
-            return 45 * minute;
+            return 45 * MINUTE;
         case DISABLE_1HR:
-            return 1 * hour;
+            return 1 * HOUR;
         case DISABLE_2HR:
-            return 2 * hour;
+            return 2 * HOUR;
         case DISABLE_3HR:
-            return 3 * hour;
+            return 3 * HOUR;
         case DISABLE_4HR:
-            return 4 * hour;
+            return 4 * HOUR;
         default:
             return 0; // Important to return something less than USER_TIMER_MINIMUM in this case.
     }
@@ -315,6 +359,11 @@ void RemoveNotificationIcon(HWND windowHandle)
 
 void ShowContextMenu(HWND windowHandle, POINT point)
 {
+    if (inDialog)
+    {
+        return;
+    }
+
     if (isDisabled)
     {
         ShowDisabledContextMenu(windowHandle, point);
@@ -421,3 +470,76 @@ void Error(TCHAR* msg)
 }
 
 #pragma endregion // MainWindow.
+
+#pragma region Timer Picker Dialog
+
+INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
+        case WM_INITDIALOG:
+            {
+                // Add items to lists.
+                FillListbox(hDlg, HOURS_LISTBOX_ID, hours, ARRAYSIZE(hours));
+                FillListbox(hDlg, MINUTES_LISTBOX_ID, minutes, ARRAYSIZE(minutes));
+                FillListbox(hDlg, SECONDS_LISTBOX_ID, seconds, ARRAYSIZE(seconds));
+                SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)programIcon);
+                return TRUE;               
+            }
+        case WM_CLOSE:
+            EndDialog(hDlg, 0);
+            return 0;
+        case WM_COMMAND:
+            switch (LOWORD(wParam))
+            {
+                case APPLY_PICKER_BTN_ID:
+                    {
+                        int hoursSel = GetSelection(hDlg, HOURS_LISTBOX_ID);
+                        int minutesSel = GetSelection(hDlg, MINUTES_LISTBOX_ID);
+                        int secondsSel = GetSelection(hDlg, SECONDS_LISTBOX_ID);
+                        UINT duration = hours[hoursSel].amount * HOUR +
+                                        minutes[minutesSel].amount * MINUTE +
+                                        seconds[secondsSel].amount * SECOND;
+
+                        EndDialog(hDlg, duration);
+                        return TRUE;
+                    }
+                case CANCEL_PICKER_BTN_ID:
+                    EndDialog(hDlg, 0);
+                    return TRUE;
+            }
+
+            return TRUE;
+    }
+
+    return FALSE;
+}
+
+void FillListbox(HWND dialog, int id, TimeOption* items, size_t nitems)
+{
+    HWND listbox = GetDlgItem(dialog, id);
+
+    for (int i = 0; i < nitems; i++)
+    { 
+        int pos = (int)SendMessage(listbox, LB_ADDSTRING, 0, (LPARAM)items[i].text);
+
+        // Set the array index of the item so we can retrieve it later.
+        SendMessage(listbox, LB_SETITEMDATA, pos, (LPARAM)i); 
+    }
+}
+
+int GetSelection(HWND dialog, int id)
+{
+    HWND listbox = GetDlgItem(dialog, id);
+    int selection = SendMessage(listbox, LB_GETCURSEL, 0, 0);
+
+    if (selection == LB_ERR)
+    {
+        fprintf(stderr, "Got LB_ERR for 0x%x\n", id);
+        selection = 0;
+    }
+
+    return selection;
+}
+
+#pragma endregion // Time Picker Dialog
