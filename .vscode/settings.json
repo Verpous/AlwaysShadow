@@ -21,6 +21,8 @@
         "optional": "cpp",
         "numeric": "cpp",
         "streambuf": "cpp",
-        "memory": "c"
+        "memory": "c",
+        "windows.h": "c",
+        "tchar.h": "c"
     }
 }

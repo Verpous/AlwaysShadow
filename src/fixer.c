@@ -1,5 +1,5 @@
 // AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
-// Copyright (C) 2020 Aviv Edery.
+// Copyright (C) 2021 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -264,20 +264,17 @@ void InitializeWmi()
 
 BSTR* FetchWhitelist(size_t* nprocs)
 {
-    BSTR* procCmds = NULL;
     FILE* whitelist;
+    BSTR* procCmds = NULL;
+    *nprocs = 0;
 
     if (_tfopen_s(&whitelist, TEXT("Whitelist.txt"), TEXT("r")) != 0)
     {
         // Defaulting to filtering just Netflix.
-        procCmds = malloc(sizeof(BSTR));
-        procCmds[0] = SysAllocString(L"\"C:\\WINDOWS\\system32\\wwahost.exe\" -ServerName:Netflix.App.wwa");
-        *nprocs = 1;
-        fprintf(stderr, "Couldn't open whitelist. Defaulting to netflix.\n");
+        fprintf(stderr, "Couldn't open whitelist.\n");
         return procCmds;
     }
 
-    *nprocs = 0;
     char buffer[1 << 13];
     wchar_t wbuffer[sizeof(buffer)];
     

@@ -1,1 +1,2 @@
-"C:\WINDOWS\system32\wwahost.exe" -ServerName:Netflix.App.wwa
+"C:\Windows\system32\wwahost.exe" -ServerName:Netflix.App.wwa
+"C:\Program Files\WindowsApps\AmazonVideo.PrimeVideo_1.0.84.0_x64__pwbj9vvecjh7j\PrimeVideo.exe" -ServerName:App.AppX21qthfa64w8vh9emhw9pfwse20vpg5n9.mca
