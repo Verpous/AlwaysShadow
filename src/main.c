@@ -17,7 +17,6 @@
 #include "Resource.h"
 #include "defines.h"
 #include <windows.h>    // For winapi.
-#include <stdio.h>      // For printing errors and such.
 #include <tchar.h>      // For dealing with unicode and ANSI strings.
 #include <pthread.h>    // For multithreading.
 
@@ -89,7 +88,7 @@ static BOOL inDialog = FALSE;
 // Trying to use wWinMain causes the program to not compile. It's ok though, because we've got GetCommandLine() to get the line as unicode.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
-    fprintf(stderr, "\n~~~STARTING A RUN~~~\n");
+    LOG("\n~~~STARTING A RUN~~~");
 
     if (!CheckOneInstance())
     {
@@ -130,7 +129,7 @@ void RegisterMainWindowClass(HINSTANCE instanceHandle)
     // Registering this class. If it fails, we'll log it and end the program.
     if (!RegisterClass(&mainWindowClass))
     {
-        fprintf(stderr, "RegisterClass of main window failed with error code: 0x%lX\n", GetLastError());
+        LOG("RegisterClass of main window failed with error code: 0x%lX", GetLastError());
         Error(TEXT("There was an error when initializing the program. Quitting."));
     }
 }
@@ -167,7 +166,7 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
                 int ret;
                 if ((ret = pthread_create(&fixerThread, NULL, FixerLoop, NULL)) != 0)
                 {
-                    fprintf(stderr, "pthread_create failed with error code 0x%X", ret);
+                    LOG("pthread_create failed with error code 0x%X", ret);
                     Error(TEXT("There was an error when initializing the program. Quitting."));
                 }
             }
@@ -333,7 +332,7 @@ void AddNotificationIcon(HWND windowHandle)
 
     if (!Shell_NotifyIcon(NIM_ADD, &nid))
     {
-        fprintf(stderr, "Failed to create notification icon.\n");
+        LOG("Failed to create notification icon.");
         Error(TEXT("There was an error creating the system tray icon. Quitting."));
     }
     
@@ -342,7 +341,7 @@ void AddNotificationIcon(HWND windowHandle)
 
     if (!Shell_NotifyIcon(NIM_SETVERSION, &nid))
     {
-        fprintf(stderr, "Failed to set notification icon version.\n");
+        LOG("Failed to set notification icon version.");
         Error(TEXT("There was an error creating the system tray icon. Quitting."));
     }
 }
@@ -535,7 +534,7 @@ int GetSelection(HWND dialog, int id)
 
     if (selection == LB_ERR)
     {
-        fprintf(stderr, "Got LB_ERR for 0x%x\n", id);
+        LOG("Got LB_ERR for 0x%x", id);
         selection = 0;
     }
 

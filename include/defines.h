@@ -2,6 +2,9 @@
 #define DEFINES_H
 
 #include <windows.h>
+#include <stdio.h>
+
+#define LOG(fmt, ...) fprintf(stderr, fmt "\n", ##__VA_ARGS__)
 
 typedef struct
 {
@@ -37,9 +40,7 @@ int GetSelection(HWND dialog, int id);
 void* FixerLoop(void* arg);
 void ThreadError(TCHAR* msg);
 void ReleaseResources(void* arg);
-
-void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof);
-char IsInstantReplayOn(WCHAR* tempFilesPath);
+char IsInstantReplayOn();
 
 INPUT* FetchToggleShortcut(size_t* ninputs);
 void CreateInput(INPUT* input, WORD vkey, char isDown);

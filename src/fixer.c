@@ -15,7 +15,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "defines.h"
-#include <stdio.h>      // For printing errors and such.
 #include <tchar.h>      // For dealing with unicode and ANSI strings.
 #include <pthread.h>    // For multithreading.
 #include <unistd.h>     // For sleep.
@@ -51,8 +50,6 @@ void* FixerLoop(void* arg)
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
-    WCHAR tempFilesPath[MAX_PATH];
-	FetchTempFilesPath(tempFilesPath, sizeof(tempFilesPath), _countof(tempFilesPath));
     inputs = FetchToggleShortcut(&ninputs);
     procCmds = FetchWhitelist(&nprocs);
 
@@ -70,7 +67,7 @@ void* FixerLoop(void* arg)
             continue;
         }
 
-        if (!IsInstantReplayOn(tempFilesPath) && !WhitelistedProcessIsRunning(procCmds, nprocs))
+        if (!IsInstantReplayOn() && !WhitelistedProcessIsRunning(procCmds, nprocs))
         {
             ToggleInstantReplay(inputs, ninputs);
         }
@@ -118,37 +115,21 @@ void ReleaseResources(void* arg)
 
 #pragma region Checking-Active
 
-// For some reason if we try to compute bufsz/sizeof(*buffer) instead of countof, wcscat fails.
-void FetchTempFilesPath(WCHAR* buffer, DWORD bufsz, rsize_t countof)
+char IsInstantReplayOn()
 {
-	LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("TempFilePath"), RRF_RT_ANY, NULL, (PVOID)buffer, &bufsz);
+    // There's a registry key which will tell us if it's on.
+    DWORD isActive;
+    DWORD bufsz = sizeof(isActive);
+    LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("{1B1D3DAA-601D-49E5-8508-81736CA28C6D}"), RRF_RT_ANY, NULL, (PVOID)&isActive, &bufsz);
 
     if (ret != ERROR_SUCCESS)
     {
-        fprintf(stderr, "Failed to fetch temp file path with error code 0x%lX\n", ret);
-        ThreadError(TEXT("Failed to detect settings for identifying if Instant Replay is on. Quitting."));
+        LOG("Failed to read registry key check if Instant Replay is on with error code 0x%lX", ret);
+        return TRUE;
     }
-    
-    if (wcscat_s(buffer, countof, L"9343b833-e7af-42ea-8a61-31bc41eefe2b\\Sha*.tmp") != 0)
-    {
-        fprintf(stderr, "Failed to append file path suffix.\n");
-        ThreadError(TEXT("Failed to detect settings for identifying if Instant Replay is on. Quitting."));
-    }
-}
 
-char IsInstantReplayOn(WCHAR* tempFilesPath)
-{
-    // We detect if Instant Replay is on by checking if its temp files exist.
-    WIN32_FIND_DATA fileData;
-    HANDLE fileHandle = FindFirstFile(tempFilesPath, &fileData);
-
-    if (fileHandle == INVALID_HANDLE_VALUE)
-    {
-        return FALSE;
-    }
-    
-    FindClose(fileHandle);
-    return TRUE;
+    // Technically isActive is already 0/1 but since it's a DWORD and we want to return a char, !! will do it safely.
+    return !!isActive;
 }
 
 #pragma endregion // Checking-Active
@@ -191,7 +172,7 @@ INPUT* FetchToggleShortcut(size_t* ninputs)
             TCHAR valueName[256];
             if (_sntprintf_s(valueName, _countof(valueName), _TRUNCATE, TEXT("IRToggleHKey%d"), i) == -1)
             {
-                fprintf(stderr, "This shortcut must be hella long because I can't fit the number in this buffer!\n");
+                LOG("This shortcut must be hella long because I can't fit the number in this buffer!");
                 ThreadError(TEXT("Failed to detect settings for being able to turn on Instant Replay. Quitting."));
             }
 
@@ -202,7 +183,7 @@ INPUT* FetchToggleShortcut(size_t* ninputs)
 
             if (ret != ERROR_SUCCESS)
             {
-                fprintf(stderr, "Failed to read hotkey %d with error code 0x%lX\n", i, ret);
+                LOG("Failed to read hotkey %d with error code 0x%lX", i, ret);
                 ThreadError(TEXT("Failed to detect settings for being able to turn on Instant Replay. Quitting."));
             }
 
@@ -237,7 +218,7 @@ void InitializeWmi()
     // Initializate the Windows security.
     if (FAILED(CoInitializeEx(0, COINIT_MULTITHREADED)))
     {
-        fprintf(stderr, "CoInitializeEx failed.\n");
+        LOG("CoInitializeEx failed.");
         ThreadError(error);
     }
 
@@ -245,19 +226,19 @@ void InitializeWmi()
 
     if (FAILED(CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL)))
     {
-        fprintf(stderr, "CoInitializeSecurity failed.\n");
+        LOG("CoInitializeSecurity failed.");
         ThreadError(error);
     }
 
     if (FAILED(CoCreateInstance(&CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (LPVOID*)&wbemLocator)))
     {
-        fprintf(stderr, "CoCreateInstance failed.\n");
+        LOG("CoCreateInstance failed.");
         ThreadError(error);
     }
 
     if (FAILED(wbemLocator->lpVtbl->ConnectServer(wbemLocator, L"ROOT\\CIMV2", NULL, NULL, NULL, 0, NULL, NULL, &wbemServices)))
     {
-        fprintf(stderr, "ConnectServer failed.\n");
+        LOG("ConnectServer failed.");
         ThreadError(error);
     }
 }
@@ -271,7 +252,7 @@ BSTR* FetchWhitelist(size_t* nprocs)
     if (_tfopen_s(&whitelist, TEXT("Whitelist.txt"), TEXT("r")) != 0)
     {
         // Defaulting to filtering just Netflix.
-        fprintf(stderr, "Couldn't open whitelist.\n");
+        LOG("Couldn't open whitelist.");
         return procCmds;
     }
 
@@ -284,12 +265,12 @@ BSTR* FetchWhitelist(size_t* nprocs)
 
         if (mbstowcs_s(NULL, wbuffer, _countof(wbuffer), line, _countof(wbuffer) - 1) != 0)
         {
-            fprintf(stderr, "Failed to convert command line %s\n", line);
+            LOG("Failed to convert command line %s", line);
             continue;
         }
         else
         {
-            fprintf(stderr, "Adding to the whitelist: %s\n", line);
+            LOG("Adding to the whitelist: %s", line);
         }
 
         procCmds = realloc(procCmds, ((*nprocs) + 1) * sizeof(BSTR));
@@ -350,7 +331,7 @@ char WhitelistedProcessIsRunning(BSTR* procCmds, size_t nprocs)
                 {
                     if (wcsncmp(procCmds[i], line, max(SysStringLen(procCmds[i]), len)) == 0)
                     {
-                        fprintf(stderr, "EQUALITY FOUND\n%ls\n%ls\n", procCmds[i], line);
+                        LOG("EQUALITY FOUND\n%ls\n%ls", procCmds[i], line);
                         result->lpVtbl->Release(result);
                         enumWbem->lpVtbl->Release(enumWbem);
                         return TRUE;

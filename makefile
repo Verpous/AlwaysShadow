@@ -49,7 +49,7 @@ run: $(PROG) runx
 
 # "Run exclusively". Same as run, but won't try to compile it.
 runx:
-	$(PROG) >>errors.log 2>&1
+	$(PROG) &>> errors.log
 
 # Empties the bin folder.
 clean:
