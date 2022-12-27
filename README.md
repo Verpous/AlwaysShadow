@@ -27,7 +27,7 @@ AlwaysShadow turns on Instant Replay by simulating the keypresses for the shortc
 
 ## Download
 
-Simply click [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.2/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. And of course, you can always clone the repo and compile it yourself.
+Simply click [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.3/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. And of course, you can always clone the repo and compile it yourself.
 
 ## Compilation instructions
 
