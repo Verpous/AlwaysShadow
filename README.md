@@ -20,8 +20,7 @@ The repo includes an example Whitelist.txt with Netflix and Prime Video in it bu
 
 You will need to exit and relaunch this program if you do one of the following things:
 1. Change the shortcut for toggling Instant Replay on/off in your GeForce Experience settings
-2. Change the location where Instant Replay stores temp files
-3. Create, delete, or modify your Whitelist.txt file
+1. Create, delete, or modify your Whitelist.txt file
 
 AlwaysShadow turns on Instant Replay by simulating the keypresses for the shortcut that toggles it in GeForce Experience, which by default is Alt+Shift+F10. This may cause AlwaysShadow to change your keyboard language because the default shortcut for cycling between languages in Windows is Alt+Shift. To resolve this issue, it is recommended to go to your GeForce Experience settings and change the shortcut for toggling Instant Replay. I use Ctrl+Shift+F10. Remember that after changing the shortcut you will need to exit and relaunch this program.
 
