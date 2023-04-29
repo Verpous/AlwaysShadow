@@ -58,7 +58,6 @@ You can run "make clean" to empty the bin folder if you want to recompile everyt
 
 The makefile includes some additional targets which are explained inside the makefile via comments.
 
-I am not affiliated with NVidia in any way.
 
 ## Issues
 
@@ -68,3 +67,5 @@ Feel free to open an issue for any request or problem. If you have a problem, pl
 %LOCALAPPDATA%/AlwaysShadow/output.log
 ```
 You should exit or refresh AlwaysShadow before using this file to make sure the logs are all flushed.
+
+I am not affiliated with NVidia in any way.
