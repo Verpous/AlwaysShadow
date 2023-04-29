@@ -46,13 +46,6 @@ AlwaysShadow turns on Instant Replay by simulating the keypresses for the shortc
 
 Simply click [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.3/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. And of course, you can always clone the repo and compile it yourself.
 
-## Issues
-
-Feel free to open an issue for any request or problem. If you have a problem, please include the log file located at:
-
-```
-%LOCALAPPDATA%/AlwaysShadow/output.log
-```
 
 You should exit or refresh AlwaysShadow before using this file to make sure the logs are all flushed.
 
@@ -69,3 +62,11 @@ You can run "make clean" to empty the bin folder if you want to recompile everyt
 The makefile includes some additional targets which are explained inside the makefile via comments.
 
 I am not affiliated with NVidia in any way.
+
+## Issues
+
+Feel free to open an issue for any request or problem. If you have a problem, please include the log file located at:
+
+```
+%LOCALAPPDATA%/AlwaysShadow/output.log
+```
