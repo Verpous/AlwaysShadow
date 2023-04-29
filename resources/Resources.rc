@@ -20,6 +20,7 @@ ENABLED_CONTEXT_MENU_ID MENU
             MENUITEM "Until I turn it back on", DISABLE_INDEFINITE
         }
 
+        MENUITEM "Refresh", PROGRAM_REFRESH
         MENUITEM "Exit", PROGRAM_EXIT
     }
 }
@@ -29,6 +30,7 @@ DISABLED_CONTEXT_MENU_ID MENU
     POPUP ""
     {
         MENUITEM "Enable AlwaysShadow", ENABLE_INDEFINITE
+        MENUITEM "Refresh", PROGRAM_REFRESH
         MENUITEM "Exit", PROGRAM_EXIT
     }
 }

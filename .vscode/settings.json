@@ -23,6 +23,10 @@
         "streambuf": "cpp",
         "memory": "c",
         "windows.h": "c",
-        "tchar.h": "c"
+        "tchar.h": "c",
+        "oleauto.h": "c",
+        "regex.h": "c",
+        "errhandlingapi.h": "c",
+        "stdatomic.h": "c"
     }
 }

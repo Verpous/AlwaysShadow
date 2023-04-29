@@ -1,5 +1,5 @@
 // AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
-// Copyright (C) 2021 Aviv Edery.
+// Copyright (C) 2023 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,8 +19,13 @@
 #include <windows.h>    // For winapi.
 #include <tchar.h>      // For dealing with unicode and ANSI strings.
 #include <pthread.h>    // For multithreading.
+#include <shlobj.h>     // For getting AppData path.
+#include <direct.h>     // For making log file directory.
+#include <errno.h>      // For handling mkdir errors.
+#include <share.h>      // For opening a file with sharing options.
+#include <time.h>       // For logging date & time.
 
-#pragma region Macros
+#pragma region Declarations
 
 // The name of this program.
 #define PROGRAM_NAME TEXT("AlwaysShadow")
@@ -39,12 +44,49 @@
 
 #define MAKE_TIME_OPTION(t) { .amount = t, .text = TEXT(#t) }
 
-// Everything's measured in milliseconds.
-#define SECOND 1000u
-#define MINUTE (60u * SECOND)
-#define HOUR (60u * MINUTE)
+#define MILLIS_PER_SECOND (1000u)
+#define MILLIS_PER_MINUTE (60u * MILLIS_PER_SECOND)
+#define MILLIS_PER_HOUR (60u * MILLIS_PER_MINUTE)
 
-#pragma endregion // Macros.
+typedef struct
+{
+    UINT amount;
+    LPTSTR text;
+} TimeOption;
+
+typedef struct
+{
+    HINSTANCE instanceHandle;
+    HWND mainWindowHandle;
+    HICON programIcon;
+    HANDLE eventHandle;
+    pthread_t fixerThread;
+    UINT currentTimerDuration;
+    SYSTEMTIME timerEndTime;
+    BOOL inDialog;
+} MainCb;
+
+static void InitializeLogging();
+static void InitializeWindows(HINSTANCE instanceHandle);
+static void RegisterMainWindowClass(HINSTANCE instanceHandle);
+static void UninitializeWindows(HINSTANCE instanceHandle);
+static char CheckOneInstance();
+static LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam);
+static LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam);
+static UINT GetMilliseconds(int id);
+static SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME *sysTime, UINT millis);
+static void AddNotificationIcon(HWND windowHandle);
+static void RemoveNotificationIcon(HWND windowHandle);
+static void ShowContextMenu(HWND hwnd, POINT pt);
+static void ShowEnabledContextMenu(HWND windowHandle, POINT point);
+static void ShowDisabledContextMenu(HWND windowHandle, POINT point);
+static void Panic(LPTSTR msg);
+static void Warn(LPTSTR msg);
+static INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+static void FillListbox(HWND dialog, int id, const TimeOption *items, size_t nitems);
+static int GetSelection(HWND dialog, int id);
+
+#pragma endregion // Declarations.
 
 #pragma region Variables
 
@@ -69,17 +111,21 @@ const TimeOption hours[] =
     MAKE_TIME_OPTION(20), MAKE_TIME_OPTION(21), MAKE_TIME_OPTION(22), MAKE_TIME_OPTION(23),
 };
 
-volatile char isDisabled = FALSE;
-volatile char fixerDied = FALSE;
+GlobalCb glbl =
+{
+    .isDisabled = FALSE,
+    .isRefresh = FALSE,
+    .fixerDied = FALSE,
+    .issueWarning = FALSE,
+    .errorMsg = {0},
+    .warningMsg = {0},
+    .lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER,
 
-static HINSTANCE instanceHandle = NULL;
-static HWND mainWindowHandle = NULL;
-static HICON programIcon = NULL;
-static HANDLE eventHandle = NULL;
-static pthread_t fixerThread = 0;
-static UINT currentTimerDuration = 0;
-static SYSTEMTIME timerEndTime = { 0 };
-static BOOL inDialog = FALSE;
+    .logfile = NULL,
+    .loglock = PTHREAD_ONCE_INIT,
+};
+
+static MainCb cb = {0};
 
 #pragma endregion // Variables.
 
@@ -88,14 +134,16 @@ static BOOL inDialog = FALSE;
 // Trying to use wWinMain causes the program to not compile. It's ok though, because we've got GetCommandLine() to get the line as unicode.
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
-    LOG("\n~~~STARTING A RUN~~~");
-
     if (!CheckOneInstance())
     {
-        Error(TEXT("Only one instance of AlwaysShadow is allowed."));
+        PANIC(TEXT("Only one instance of the program is allowed."));
     }
 
-    instanceHandle = hInstance;
+    // The log file is a shared resource so we can't initialize it until we've ensured we're the only instance.
+    InitializeLogging();
+    LOG("~~~~ STARTING A RUN: BUILD DATE %s %s ~~~~", __DATE__, __TIME__);
+
+    cb.instanceHandle = hInstance;
 
     InitializeWindows(hInstance);
     MSG msg = {0};
@@ -111,42 +159,104 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     return 0;
 }
 
-void InitializeWindows(HINSTANCE instanceHandle)
+static void InitializeLogging()
 {
-    programIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
-    RegisterMainWindowClass(instanceHandle);
-    mainWindowHandle = CreateWindow(WC_MAINWINDOW, PROGRAM_NAME, WS_MINIMIZE, 0, 0, 0, 0, 0, 0, 0, 0);
+    // Default to this unless assigned otherwise.
+    glbl.logfile = stderr;
+
+    // Get local app data path.
+    wchar_t *localAppDataPath;
+    HRESULT hr = SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &localAppDataPath);
+
+    if (FAILED(hr))
+    {
+        LOG_ERROR("Failed to obtain LocalAppData path with error code %#lx, using stderr.", hr);
+        goto exit;
+    }
+
+    // Make directory in %LOCALAPPDATA% where we'll store the logs.
+    int res;
+    wchar_t logfileName[1 << 13];
+    swprintf_s(logfileName, _countof(logfileName), L"%ls\\AlwaysShadow", localAppDataPath);
+
+    if ((res = _wmkdir(logfileName)) != 0 && errno != EEXIST)
+    {
+        LOG_ERROR("Failed to make directory for log file with error %s", strerror(errno));
+        goto exit;
+    }
+
+    // Open log file in the path we've created.
+    FILE *file;
+    swprintf_s(logfileName, _countof(logfileName), L"%ls\\AlwaysShadow\\output.log", localAppDataPath);
+
+    // Kinda hacky: to prevent the log file from growing forever, we have a random chance to open the file in write mode instead of append,
+    // which truncates the file and behaves similar enough to append for all we care.
+    srand(time(NULL));
+    LPWSTR mode = rand() % 100 < 5 ? L"w" : L"a";
+
+    // We allow reading of the log file while it is open.
+    if ((file = _wfsopen(logfileName, mode, _SH_DENYWR)) == NULL)
+    {
+        LOG_ERROR("Failed to make log file with error %s", strerror(errno));
+        goto exit;
+    }
+
+    glbl.logfile = file;
+
+exit:
+    CoTaskMemFree(localAppDataPath);
+    return;
 }
 
-void RegisterMainWindowClass(HINSTANCE instanceHandle)
+// Do not hold on to the returned string as it will change next time you call this function.
+char *GetDateTimeStr()
+{
+    static __thread char str[1 << 8];
+    time_t timestamp = time(NULL);
+    struct tm timeData;
+    localtime_s(&timeData, &timestamp); // localtime is not thread safe!
+    strftime(str, sizeof(str), "%Y-%m-%d %H:%M:%S", &timeData);
+    str[_countof(str) - 1] = '\0';
+    return str;
+}
+
+static void InitializeWindows(HINSTANCE instanceHandle)
+{
+    cb.programIcon = LoadIcon(instanceHandle, MAKEINTRESOURCE(PROGRAM_ICON_ID));
+    RegisterMainWindowClass(instanceHandle);
+    cb.mainWindowHandle = CreateWindow(WC_MAINWINDOW, PROGRAM_NAME, WS_MINIMIZE, 0, 0, 0, 0, 0, 0, 0, 0);
+}
+
+static void RegisterMainWindowClass(HINSTANCE instanceHandle)
 {
     WNDCLASS mainWindowClass = {0};
     mainWindowClass.hInstance = instanceHandle;
     mainWindowClass.lpszClassName = WC_MAINWINDOW;
     mainWindowClass.lpfnWndProc = MainWindowProcedure;
-    mainWindowClass.hIcon = programIcon;
+    mainWindowClass.hIcon = cb.programIcon;
 
     // Registering this class. If it fails, we'll log it and end the program.
     if (!RegisterClass(&mainWindowClass))
     {
-        LOG("RegisterClass of main window failed with error code: 0x%lX", GetLastError());
-        Error(TEXT("There was an error when initializing the program. Quitting."));
+        LOG_ERROR("RegisterClass of main window failed with error code: %#lx", GetLastError());
+        PANIC(TEXT("Error initializing the program: RegisterClass error %#lx. Quitting."), GetLastError());
     }
 }
 
-void UninitializeWindows(HINSTANCE instanceHandle)
+static void UninitializeWindows(HINSTANCE instanceHandle)
 {
     UnregisterClass(WC_MAINWINDOW, instanceHandle);
 }
 
-char CheckOneInstance()
+// IMPORTANT: This function cannot use LOG because it is called before logging is initialized.
+static char CheckOneInstance()
 {
-    eventHandle = CreateEvent(NULL, FALSE, FALSE, TEXT("Global\\AlwaysShadowEvent"));
+    cb.eventHandle = CreateEvent(NULL, FALSE, FALSE, TEXT("Global\\AlwaysShadowEvent"));
 
-    if (eventHandle == NULL || GetLastError() == ERROR_ALREADY_EXISTS)
+    if (cb.eventHandle == NULL || GetLastError() == ERROR_ALREADY_EXISTS)
     {
-        CloseHandle(eventHandle);
-        eventHandle = NULL;
+        CloseHandle(cb.eventHandle);
+        cb.eventHandle = NULL;
         return FALSE;
     }
 
@@ -157,17 +267,17 @@ char CheckOneInstance()
 
 #pragma region MainWindow
 
-LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam)
+static LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam, LPARAM lparam)
 {
     switch (msg)
     {
         case WM_CREATE:
             {
                 int ret;
-                if ((ret = pthread_create(&fixerThread, NULL, FixerLoop, NULL)) != 0)
+                if ((ret = pthread_create(&cb.fixerThread, NULL, FixerLoop, NULL)) != 0)
                 {
-                    LOG("pthread_create failed with error code 0x%X", ret);
-                    Error(TEXT("There was an error when initializing the program. Quitting."));
+                    LOG_ERROR("pthread_create failed with error code %#x", ret);
+                    PANIC(TEXT("Error initializing the program: pthread_create error %#x. Quitting."), ret);
                 }
             }
 
@@ -193,28 +303,50 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
             switch (wparam)
             {
                 case CHECK_ALIVE_TIMER_ID:
+                    // I want to avoid holding the lock while displaying message boxes that can last very long.
+                    pthread_mutex_lock(&glbl.lock);
+                    char fixerDied = glbl.fixerDied;
+                    char issueWarning = glbl.issueWarning;
+                    pthread_mutex_unlock(&glbl.lock);
+
+                    // If fixer died then there is no second thread so we need not worry about locking for errorMsg.
                     if (fixerDied)
                     {
+                        LOG("Main thread found that fixer died. Quitting.");
                         KillTimer(windowHandle, CHECK_ALIVE_TIMER_ID);
-                        Error(errorMsg);
+                        PANIC(TCS_FMT, glbl.errorMsg);
+                    }
+                    else if (issueWarning) {
+                        pthread_mutex_lock(&glbl.lock);
+                        glbl.issueWarning = FALSE;
+                        WARN(&glbl.lock, TCS_FMT, glbl.warningMsg);
                     }
 
                     break;
                 case ENABLE_TIMER_ID:
+                    LOG("Timer has run out, re-enabling.");
                     KillTimer(windowHandle, ENABLE_TIMER_ID);
-                    isDisabled = FALSE;
+
+                    pthread_mutex_lock(&glbl.lock);
+                    glbl.isDisabled = FALSE;
+                    pthread_mutex_unlock(&glbl.lock);
                     break;
             }
 
             return 0;
         case WM_CLOSE:
+            LOG("Received WM_CLOSE. Quitting.");
             RemoveNotificationIcon(windowHandle);
-            pthread_cancel(fixerThread);
-            pthread_join(fixerThread, NULL);
+            pthread_cancel(cb.fixerThread);
+            pthread_join(cb.fixerThread, NULL);
+            CloseHandle(cb.eventHandle);
             DestroyWindow(windowHandle);
-            CloseHandle(eventHandle);
             return 0;
         case WM_DESTROY:
+            LOG("Received WM_DESTROY. Quitting.");
+            pthread_mutex_lock(&glbl.loglock);
+            fflush(glbl.logfile);
+            pthread_mutex_unlock(&glbl.loglock);
             PostQuitMessage(0);
             return 0;
         default:
@@ -222,27 +354,32 @@ LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM wparam,
     }
 }
 
-LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
+static LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam)
 {
     WORD wparamLow = LOWORD(wparam);
 
     switch (wparamLow)
     {
         case DISABLE_CUSTOM:
-            inDialog = TRUE;
-            currentTimerDuration = DialogBox(instanceHandle, MAKEINTRESOURCE(TIME_PICKER_ID), windowHandle, TimePickerProc);
-            inDialog = FALSE;
+            cb.inDialog = TRUE;
+            cb.currentTimerDuration = DialogBox(cb.instanceHandle, MAKEINTRESOURCE(TIME_PICKER_ID), windowHandle, TimePickerProc);
+            cb.inDialog = FALSE;
 
-            if (currentTimerDuration > USER_TIMER_MINIMUM)
+            if (cb.currentTimerDuration > USER_TIMER_MINIMUM)
             {
-                GetLocalTime(&timerEndTime);
-                timerEndTime = AddMillisecondsToTime(&timerEndTime, currentTimerDuration);
+                GetLocalTime(&cb.timerEndTime);
+                cb.timerEndTime = AddMillisecondsToTime(&cb.timerEndTime, cb.currentTimerDuration);
+                SetTimer(windowHandle, ENABLE_TIMER_ID, cb.currentTimerDuration, NULL);
 
-                if (currentTimerDuration >= USER_TIMER_MINIMUM)
-                {
-                    SetTimer(windowHandle, ENABLE_TIMER_ID, currentTimerDuration, NULL);
-                    isDisabled = TRUE;
-                }
+                pthread_mutex_lock(&glbl.lock);
+                glbl.isDisabled = TRUE;
+                pthread_mutex_unlock(&glbl.lock);
+                
+                LOG("Disabled self for custom duration of %d millis", cb.currentTimerDuration);
+            }
+            else 
+            {
+                LOG_WARN("Not disabling self because custom duration of %d millis is below the minimum", cb.currentTimerDuration);
             }
 
             break;
@@ -254,25 +391,41 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
         case DISABLE_3HR:
         case DISABLE_4HR:
         case DISABLE_INDEFINITE:
-            currentTimerDuration = GetMilliseconds(wparamLow);
-            GetLocalTime(&timerEndTime);
-            timerEndTime = AddMillisecondsToTime(&timerEndTime, currentTimerDuration);
+            cb.currentTimerDuration = GetMilliseconds(wparamLow);
+            GetLocalTime(&cb.timerEndTime);
+            cb.timerEndTime = AddMillisecondsToTime(&cb.timerEndTime, cb.currentTimerDuration);
+            LOG("Received disable self request code %#x, millis = %d.", wparamLow, cb.currentTimerDuration);
 
-            if (currentTimerDuration >= USER_TIMER_MINIMUM)
+            if (cb.currentTimerDuration >= USER_TIMER_MINIMUM)
             {
-                SetTimer(windowHandle, ENABLE_TIMER_ID, currentTimerDuration, NULL);
+                SetTimer(windowHandle, ENABLE_TIMER_ID, cb.currentTimerDuration, NULL);
+                LOG("Timer has been scheduled to re-enable when the time is up.");
             }
 
-            isDisabled = TRUE;
+            pthread_mutex_lock(&glbl.lock);
+            glbl.isDisabled = TRUE;
+            pthread_mutex_unlock(&glbl.lock);
             break;
         case ENABLE_INDEFINITE:
             // If there is no timer it's no harm done.
             KillTimer(windowHandle, ENABLE_TIMER_ID);
-            isDisabled = FALSE;
+            LOG("Received enable request, re-enabling.");
+
+            pthread_mutex_lock(&glbl.lock);
+            glbl.isDisabled = FALSE;
+            pthread_mutex_unlock(&glbl.lock);
             break;
         case PROGRAM_EXIT:
+            LOG("Exit button has been pressed. Quitting.");
             RemoveNotificationIcon(windowHandle);
             DestroyWindow(windowHandle);
+            break;
+        case PROGRAM_REFRESH:
+            LOG("Refresh button has been pressed.");
+
+            pthread_mutex_lock(&glbl.lock);
+            glbl.isRefresh = TRUE;
+            pthread_mutex_unlock(&glbl.lock);
             break;
     }
 
@@ -280,30 +433,30 @@ LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM lparam
 }
 
 // Translates a notification code to a milliseconds duration.
-UINT GetMilliseconds(int id)
+static UINT GetMilliseconds(int id)
 {
     switch (id)
     {
         case DISABLE_15MIN:
-            return 15 * MINUTE;
+            return 15 * MILLIS_PER_MINUTE;
         case DISABLE_30MIN:
-            return 30 * MINUTE;
+            return 30 * MILLIS_PER_MINUTE;
         case DISABLE_45MIN:
-            return 45 * MINUTE;
+            return 45 * MILLIS_PER_MINUTE;
         case DISABLE_1HR:
-            return 1 * HOUR;
+            return 1 * MILLIS_PER_HOUR;
         case DISABLE_2HR:
-            return 2 * HOUR;
+            return 2 * MILLIS_PER_HOUR;
         case DISABLE_3HR:
-            return 3 * HOUR;
+            return 3 * MILLIS_PER_HOUR;
         case DISABLE_4HR:
-            return 4 * HOUR;
+            return 4 * MILLIS_PER_HOUR;
         default:
             return 0; // Important to return something less than USER_TIMER_MINIMUM in this case.
     }
 }
 
-SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME* sysTime, UINT millis)
+static SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME *sysTime, UINT millis)
 {
     FILETIME fileTime;
     SYSTEMTIME result;
@@ -320,20 +473,20 @@ SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME* sysTime, UINT millis)
     return result;
 }
 
-void AddNotificationIcon(HWND windowHandle)
+static void AddNotificationIcon(HWND windowHandle)
 {
     NOTIFYICONDATA nid = { sizeof(nid) };
     nid.hWnd = windowHandle;
     nid.uFlags = NIF_ICON | NIF_SHOWTIP | NIF_TIP | NIF_MESSAGE;
     nid.uID = TRAY_ICON_UUID;
     nid.uCallbackMessage = TRAY_ICON_CALLBACK;
-    nid.hIcon = programIcon;
+    nid.hIcon = cb.programIcon;
     _tcscpy_s(nid.szTip, _countof(nid.szTip), PROGRAM_NAME);
 
     if (!Shell_NotifyIcon(NIM_ADD, &nid))
     {
-        LOG("Failed to create notification icon.");
-        Error(TEXT("There was an error creating the system tray icon. Quitting."));
+        LOG_ERROR("Failed to create notification icon.");
+        PANIC(TEXT("Error creating the system tray icon. Quitting."));
     }
     
     // NOTIFYICON_VERSION_4 is preferred
@@ -341,27 +494,33 @@ void AddNotificationIcon(HWND windowHandle)
 
     if (!Shell_NotifyIcon(NIM_SETVERSION, &nid))
     {
-        LOG("Failed to set notification icon version.");
-        Error(TEXT("There was an error creating the system tray icon. Quitting."));
+        LOG_ERROR("Failed to set notification icon version.");
+        PANIC(TEXT("Error creating the system tray icon. Quitting."));
     }
+
+    LOG("Notification icon successfully created.");
 }
 
-void RemoveNotificationIcon(HWND windowHandle)
+static void RemoveNotificationIcon(HWND windowHandle)
 {
     NOTIFYICONDATA nid = { sizeof(nid) };
     nid.hWnd = windowHandle;
     nid.uFlags = NIF_ICON;
     nid.uID = TRAY_ICON_UUID;
-    nid.hIcon = programIcon;
+    nid.hIcon = cb.programIcon;
     Shell_NotifyIcon(NIM_DELETE, &nid);
 }
 
-void ShowContextMenu(HWND windowHandle, POINT point)
+static void ShowContextMenu(HWND windowHandle, POINT point)
 {
-    if (inDialog)
+    if (cb.inDialog)
     {
         return;
     }
+
+    pthread_mutex_lock(&glbl.lock);
+    char isDisabled = glbl.isDisabled;
+    pthread_mutex_unlock(&glbl.lock);
 
     if (isDisabled)
     {
@@ -373,12 +532,13 @@ void ShowContextMenu(HWND windowHandle, POINT point)
     }
 }
 
-void ShowEnabledContextMenu(HWND windowHandle, POINT point)
+static void ShowEnabledContextMenu(HWND windowHandle, POINT point)
 {
-    HMENU hMenu = LoadMenu(instanceHandle, MAKEINTRESOURCE(ENABLED_CONTEXT_MENU_ID));
+    HMENU hMenu = LoadMenu(cb.instanceHandle, MAKEINTRESOURCE(ENABLED_CONTEXT_MENU_ID));
 
     if (!hMenu)
     {
+        LOG_ERROR("Failed to load enable context menu");
         return;
     }
 
@@ -386,6 +546,7 @@ void ShowEnabledContextMenu(HWND windowHandle, POINT point)
 
     if (!hSubMenu)
     {
+        LOG_ERROR("Failed to obtain enable context submenu");
         goto cleanup;
     }
 
@@ -410,12 +571,13 @@ cleanup:
     DestroyMenu(hMenu);
 }
 
-void ShowDisabledContextMenu(HWND windowHandle, POINT point)
+static void ShowDisabledContextMenu(HWND windowHandle, POINT point)
 {
-    HMENU hMenu = LoadMenu(instanceHandle, MAKEINTRESOURCE(DISABLED_CONTEXT_MENU_ID));
+    HMENU hMenu = LoadMenu(cb.instanceHandle, MAKEINTRESOURCE(DISABLED_CONTEXT_MENU_ID));
 
     if (!hMenu)
     {
+        LOG_ERROR("Failed to load disable context menu");
         return;
     }
 
@@ -423,6 +585,7 @@ void ShowDisabledContextMenu(HWND windowHandle, POINT point)
 
     if (!hSubMenu)
     {
+        LOG_ERROR("Failed to obtain disable context submenu");
         goto cleanup;
     }
 
@@ -430,14 +593,14 @@ void ShowDisabledContextMenu(HWND windowHandle, POINT point)
     SetForegroundWindow(windowHandle);
 
     // If the timer's duration is 0 then it's disabled indefinitely and we don't need to write until when it's disabled.
-    if (currentTimerDuration > 0)
+    if (cb.currentTimerDuration > 0)
     {
         // Writing the text. End result should look like: "Enable AlwaysShadow (disabled until 18:32)"
         TCHAR txt[256];
-        _stprintf_s(txt, sizeof(txt) / sizeof(*txt), TEXT("Enable AlwaysShadow (disabled until %u:%02u)"),
-            timerEndTime.wHour, timerEndTime.wMinute);
+        _stprintf_s(txt, sizeof(txt) / sizeof(*txt), TEXT("Enable ") TCS_FMT TEXT(" (disabled until %u:%02u)"),
+            PROGRAM_NAME, cb.timerEndTime.wHour, cb.timerEndTime.wMinute);
 
-        MENUITEMINFO mi = { 0 };
+        MENUITEMINFO mi = {0};
         mi.cbSize = sizeof(MENUITEMINFO);
         mi.fMask = MIIM_TYPE;
         mi.dwTypeData = txt;
@@ -457,32 +620,41 @@ void ShowDisabledContextMenu(HWND windowHandle, POINT point)
     }
 
     TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
+    LOG("Opened disable context menu");
 
 cleanup:
     DestroyMenu(hMenu);
 }
 
-void Error(TCHAR* msg)
+// IMPORTANT: This function cannot use LOG because it is called before logging is initialized.
+static void Panic(LPTSTR msg)
 {
-    MessageBox(mainWindowHandle, msg == NULL ? TEXT("An unidentified error has occured. Quitting.") : msg, PROGRAM_NAME TEXT(" - Error"), MB_OK | MB_ICONERROR);
+    MessageBox(cb.mainWindowHandle, msg == NULL ? TEXT("An unidentified error has occured. Quitting.") : msg,
+        PROGRAM_NAME TEXT(" - Error"), MB_OK | MB_ICONERROR);
     exit(1);
+}
+
+static void Warn(LPTSTR msg)
+{
+    MessageBox(cb.mainWindowHandle, msg == NULL ? TEXT("An unidentified warning has warning has occured. This shouldn't happen.") : msg,
+        PROGRAM_NAME TEXT(" - Warning"), MB_OK | MB_ICONWARNING);
 }
 
 #pragma endregion // MainWindow.
 
 #pragma region Timer Picker Dialog
 
-INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
+static INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
     {
         case WM_INITDIALOG:
             {
                 // Add items to lists.
-                FillListbox(hDlg, HOURS_LISTBOX_ID, hours, ARRAYSIZE(hours));
-                FillListbox(hDlg, MINUTES_LISTBOX_ID, minutes, ARRAYSIZE(minutes));
-                FillListbox(hDlg, SECONDS_LISTBOX_ID, seconds, ARRAYSIZE(seconds));
-                SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)programIcon);
+                FillListbox(hDlg, HOURS_LISTBOX_ID, hours, _countof(hours));
+                FillListbox(hDlg, MINUTES_LISTBOX_ID, minutes, _countof(minutes));
+                FillListbox(hDlg, SECONDS_LISTBOX_ID, seconds, _countof(seconds));
+                SendMessage(hDlg, WM_SETICON, (WPARAM)ICON_SMALL, (LPARAM)cb.programIcon);
                 return TRUE;               
             }
         case WM_CLOSE:
@@ -496,9 +668,9 @@ INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
                         int hoursSel = GetSelection(hDlg, HOURS_LISTBOX_ID);
                         int minutesSel = GetSelection(hDlg, MINUTES_LISTBOX_ID);
                         int secondsSel = GetSelection(hDlg, SECONDS_LISTBOX_ID);
-                        UINT duration = hours[hoursSel].amount * HOUR +
-                                        minutes[minutesSel].amount * MINUTE +
-                                        seconds[secondsSel].amount * SECOND;
+                        UINT duration = hours[hoursSel].amount * MILLIS_PER_HOUR +
+                                        minutes[minutesSel].amount * MILLIS_PER_MINUTE +
+                                        seconds[secondsSel].amount * MILLIS_PER_SECOND;
 
                         EndDialog(hDlg, duration);
                         return TRUE;
@@ -514,27 +686,27 @@ INT_PTR TimePickerProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
     return FALSE;
 }
 
-void FillListbox(HWND dialog, int id, TimeOption* items, size_t nitems)
+static void FillListbox(HWND dialog, int id, const TimeOption *items, size_t nitems)
 {
     HWND listbox = GetDlgItem(dialog, id);
 
     for (int i = 0; i < nitems; i++)
     { 
-        int pos = (int)SendMessage(listbox, LB_ADDSTRING, 0, (LPARAM)items[i].text);
+        int pos = SendMessage(listbox, LB_ADDSTRING, 0, (LPARAM)items[i].text);
 
         // Set the array index of the item so we can retrieve it later.
         SendMessage(listbox, LB_SETITEMDATA, pos, (LPARAM)i); 
     }
 }
 
-int GetSelection(HWND dialog, int id)
+static int GetSelection(HWND dialog, int id)
 {
     HWND listbox = GetDlgItem(dialog, id);
     int selection = SendMessage(listbox, LB_GETCURSEL, 0, 0);
 
     if (selection == LB_ERR)
     {
-        LOG("Got LB_ERR for 0x%x", id);
+        LOG_WARN("Got LB_ERR for %#x, error code %#lx (could just mean the user didn't select seconds/minutes/hours)", id, GetLastError());
         selection = 0;
     }
 

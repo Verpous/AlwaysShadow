@@ -1,5 +1,5 @@
 // AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
-// Copyright (C) 2021 Aviv Edery.
+// Copyright (C) 2023 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,111 +20,186 @@
 #include <unistd.h>     // For sleep.
 #include <wbemidl.h>    // For getting the command line of running processes.
 #include <oleauto.h>    // For working with BSTRs.
-
-#pragma region Macros
+#include <regex.h>      // For parsing the whitelist.
 
 // This came with the whitelisting function which I dare not touch.
 #define _WIN32_DCOM
 
-#pragma endregion // Macros.
+typedef struct
+{
+    BSTR command;
+    char isSubstring;
+    char isExclusive;
+} WhitelistEntry;
 
-volatile TCHAR* errorMsg = NULL;
+typedef struct
+{
+    size_t ninputs;
+    INPUT *inputs;
 
-static size_t ninputs = 0;
-static INPUT* inputs = NULL;
+    size_t nwhitelist;
+    WhitelistEntry *whitelist;
+    char isExclusiveExists;
 
-static size_t nprocs = 0;
-static BSTR* procCmds = NULL;
+    char comInitialized;
+    IWbemLocator *wbemLocator;
+    IWbemServices *wbemServices;
+} FixerCb;
 
-static char comInitialized = FALSE;
-static IWbemLocator* wbemLocator = NULL;
-static IWbemServices* wbemServices = NULL;
+static void Panic(LPTSTR msg);
+static void Warn(LPTSTR msg);
+static void ReleaseResources(char freeWmi);
+static void LoadResources(char loadWmi);
+static char IsInstantReplayOn();
+
+static INPUT *FetchToggleShortcut(size_t *ninputs);
+static void CreateInput(INPUT *input, WORD vkey, char isDown);
+static void ToggleInstantReplay();
+
+static void InitializeWmi();
+static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist);
+static char IsExclusiveExists(WhitelistEntry *whitelist, size_t nwhitelist);
+static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, char *isWhitelistedRunning, char *isExclusiveRunning);
+static wchar_t *StripLeadingTrailingWhitespaceWide(wchar_t *str);
+static char IsMatchingCommandLine(BSTR command, WhitelistEntry *entry);
+
+static FixerCb cb = {0};
 
 // TODO: See about not triggering language switch (alt+shift) when pressing alt+shift+f10.
 // TODO: See about detecting that in-game overlay is off and notifying the user to turn it on.
 // TODO: See about detecting apps that are running but suspended.
 
-void* FixerLoop(void* arg)
+void *FixerLoop(void *arg)
 {
     // Making thread cancellable.
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
-    inputs = FetchToggleShortcut(&ninputs);
-    procCmds = FetchWhitelist(&nprocs);
-
-    if (nprocs > 0)
-    {
-        InitializeWmi();
-    }
+    // Loading whitelist, shortcut, wmi, everything.
+    LoadResources(TRUE);
 
     for (;;)
     {
         sleep(10);
 
-        if (isDisabled)
+        pthread_mutex_lock(&glbl.lock);
+        char isRefresh = glbl.isRefresh;
+        char isDisabled = glbl.isDisabled;
+        glbl.isRefresh = FALSE;
+        pthread_mutex_unlock(&glbl.lock);
+
+        if (isRefresh)
         {
-            continue;
+            LOG("Received refresh signal. Refreshing.");
+            ReleaseResources(FALSE);
+            LoadResources(FALSE);
         }
 
-        if (!IsInstantReplayOn() && !WhitelistedProcessIsRunning(procCmds, nprocs))
+        if (isDisabled) continue;
+
+        char isInstantReplayOn = IsInstantReplayOn();
+
+        // When these conditions are met there is no reason to waste cpu time polling running processes.
+        if (!cb.isExclusiveExists && isInstantReplayOn) continue;
+
+        char isWhitelistedRunning, isExclusiveRunning;
+        PollRunningProcesses(cb.whitelist, cb.nwhitelist, &isWhitelistedRunning, &isExclusiveRunning);
+
+        // Whitelist disables AlwaysShadow, taking precedence over Exclusives list.
+        if (isWhitelistedRunning) continue;
+
+        if ((!isInstantReplayOn && (!cb.isExclusiveExists || isExclusiveRunning)) || // Conditions for toggling ON.
+            (isInstantReplayOn && cb.isExclusiveExists && !isExclusiveRunning)) // Conditions for toggling OFF.
         {
-            ToggleInstantReplay(inputs, ninputs);
+            LOG("Toggling because: isInstantReplayOn %d, isExclusiveExists %d, isExclusiveRunning %d", isInstantReplayOn, cb.isExclusiveExists, isExclusiveRunning);
+            ToggleInstantReplay();
         }
     }
     
     return 0;
 }
 
-void ThreadError(TCHAR* msg)
+static void Panic(LPTSTR msg)
 {
-    ReleaseResources(NULL);
-    
-    size_t len = _tcslen(msg);
-    errorMsg = malloc((len + 1) * sizeof(*errorMsg));
+    ReleaseResources(TRUE);
 
-    if (errorMsg != NULL && _tcscpy_s(errorMsg, len + 1, msg) != 0)
-    {
-        free(errorMsg);
-        errorMsg = NULL;
-    }
-    
-    fixerDied = TRUE;
+    pthread_mutex_lock(&glbl.lock);
+    _tcscpy_s(glbl.errorMsg, _countof(glbl.errorMsg), msg);
+    glbl.fixerDied = TRUE;
+    pthread_mutex_unlock(&glbl.lock);
     pthread_exit(NULL);
 }
 
-void ReleaseResources(void* arg)
+static void Warn(LPTSTR msg)
+{
+    for (;;)
+    {
+        pthread_mutex_lock(&glbl.lock);
+
+        // If previous warning hasn't been displayed yet, release lock and try again later.
+        if (glbl.issueWarning)
+        {
+            pthread_mutex_unlock(&glbl.lock);
+            sleep(1);
+            continue;
+        }
+
+        _tcscpy_s(glbl.warningMsg, _countof(glbl.warningMsg), msg);
+        glbl.issueWarning = TRUE;
+        pthread_mutex_unlock(&glbl.lock);
+        break;
+    }
+}
+
+static void ReleaseResources(char freeWmi)
 {
     // This program does a sloppy job of cleanup.
     // When this thread has an error, we clean up its resources but not the main thread's.
     // When the main thread has an error, we don't clean up shit.
     // When the program exits normally, we clean up the main thread's shit, but not this thread's.
     // But you know what? Fuck it.
-    if (wbemServices != NULL) wbemServices->lpVtbl->Release(wbemServices);
-    if (wbemLocator != NULL) wbemLocator->lpVtbl->Release(wbemLocator);
-    if (comInitialized) CoUninitialize();
-
-    for (size_t i = 0; i < nprocs; i++)
+    if (freeWmi)
     {
-        SysFreeString(procCmds[i]);
+        if (cb.wbemServices != NULL) cb.wbemServices->lpVtbl->Release(cb.wbemServices);
+        if (cb.wbemLocator != NULL) cb.wbemLocator->lpVtbl->Release(cb.wbemLocator);
+        if (cb.comInitialized) CoUninitialize();
+
+        cb.wbemServices = NULL;
+        cb.wbemLocator = NULL;
+        cb.comInitialized = FALSE;
     }
 
-    free(procCmds);
-    free(inputs);
+    for (size_t i = 0; i < cb.nwhitelist; i++) SysFreeString(cb.whitelist[i].command);
+    free(cb.whitelist);
+    free(cb.inputs);
+
+    cb.whitelist = NULL;
+    cb.inputs = NULL;
+    cb.nwhitelist = 0;
+    cb.ninputs = 0;
+}
+
+static void LoadResources(char loadWmi)
+{
+    if (loadWmi) InitializeWmi();
+    cb.inputs = FetchToggleShortcut(&cb.ninputs);
+    cb.whitelist = FetchWhitelist(TEXT("Whitelist.txt"), &cb.nwhitelist);
+    cb.isExclusiveExists = IsExclusiveExists(cb.whitelist, cb.nwhitelist);
 }
 
 #pragma region Checking-Active
 
-char IsInstantReplayOn()
+static char IsInstantReplayOn()
 {
     // There's a registry key which will tell us if it's on.
     DWORD isActive;
     DWORD bufsz = sizeof(isActive);
-    LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("{1B1D3DAA-601D-49E5-8508-81736CA28C6D}"), RRF_RT_ANY, NULL, (PVOID)&isActive, &bufsz);
+    LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"),
+        TEXT("{1B1D3DAA-601D-49E5-8508-81736CA28C6D}"), RRF_RT_ANY, NULL, (PVOID)&isActive, &bufsz);
 
     if (ret != ERROR_SUCCESS)
     {
-        LOG("Failed to read registry key check if Instant Replay is on with error code 0x%lX", ret);
+        LOG_WARN("Failed to read registry key check if Instant Replay is on with error code %#lx", ret);
         return TRUE;
     }
 
@@ -136,17 +211,20 @@ char IsInstantReplayOn()
 
 #pragma region Toggling-Active
 
-INPUT* FetchToggleShortcut(size_t* ninputs)
+static INPUT *FetchToggleShortcut(size_t *ninputs)
 {
-    INPUT* shortcut;
+    INPUT *shortcut;
 
     DWORD hkeyCount;
     DWORD bufsz = sizeof(hkeyCount);
-    LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"), TEXT("IRToggleHKeyCount"), RRF_RT_ANY, NULL, (PVOID)&hkeyCount, &bufsz);
+    LSTATUS ret = RegGetValue(HKEY_CURRENT_USER, TEXT("SOFTWARE\\NVIDIA Corporation\\Global\\ShadowPlay\\NVSPCAPS"),
+        TEXT("IRToggleHKeyCount"), RRF_RT_ANY, NULL, (PVOID)&hkeyCount, &bufsz);
 
     // Defaulting to Alt+Shift+F10.
     if (ret != ERROR_SUCCESS)
     {
+        LOG_WARN("Resorting to default toggle shortcut.");
+
         *ninputs = 6;
         size_t halfinputs = (*ninputs) / 2;
         shortcut = calloc(*ninputs, sizeof(INPUT));
@@ -161,6 +239,8 @@ INPUT* FetchToggleShortcut(size_t* ninputs)
     }
     else // Reading from registry.
     {
+        LOG("Shortcut length: %ld", hkeyCount);
+
         *ninputs = hkeyCount * 2;
         size_t halfinputs = (*ninputs) / 2;
         shortcut = calloc(*ninputs, sizeof(INPUT));
@@ -169,11 +249,11 @@ INPUT* FetchToggleShortcut(size_t* ninputs)
         for (int i = 0; i < halfinputs; i++)
         {
             // Creating string of registry name (Should be IRToggleHKey0, IRToggleHKey1, etc.).
-            TCHAR valueName[256];
+            TCHAR valueName[1 << 8];
             if (_sntprintf_s(valueName, _countof(valueName), _TRUNCATE, TEXT("IRToggleHKey%d"), i) == -1)
             {
-                LOG("This shortcut must be hella long because I can't fit the number in this buffer!");
-                ThreadError(TEXT("Failed to detect settings for being able to turn on Instant Replay. Quitting."));
+                LOG_ERROR("Error fitting registry key %d in this buffer!", i);
+                PANIC(TEXT("Failed to prepare for reading the toggle shortcut. Quitting."));
             }
 
             // Reading the registry entry.
@@ -183,114 +263,270 @@ INPUT* FetchToggleShortcut(size_t* ninputs)
 
             if (ret != ERROR_SUCCESS)
             {
-                LOG("Failed to read hotkey %d with error code 0x%lX", i, ret);
-                ThreadError(TEXT("Failed to detect settings for being able to turn on Instant Replay. Quitting."));
+                LOG_ERROR("Failed to read hotkey %d with error code %#lx", i, ret);
+                PANIC(TEXT("Failed to read toggle shortcut key %d with error code %#lx. Quitting."), i, ret);
             }
 
-            CreateInput(shortcut + i, *((WORD*)(&vkey)), TRUE);
-            CreateInput(shortcut + halfinputs + i, *((WORD*)(&vkey)), FALSE);
+            LOG("Adding vkey %#lx to shortcut.", vkey);
+            CreateInput(shortcut + i, *((WORD *)(&vkey)), TRUE);
+            CreateInput(shortcut + halfinputs + i, *((WORD *)(&vkey)), FALSE);
         }
     }
 
     return shortcut;
 }
 
-void CreateInput(INPUT* input, WORD vkey, char isDown)
+static void CreateInput(INPUT *input, WORD vkey, char isDown)
 {
     input->type = INPUT_KEYBOARD;
     input->ki.wVk = vkey;
     input->ki.dwFlags = isDown ? 0 : KEYEVENTF_KEYUP;
 }
 
-void ToggleInstantReplay(INPUT* inputs, size_t ninputs)
+static void ToggleInstantReplay()
 {
-    SendInput((UINT)ninputs, inputs, sizeof(INPUT));
+    SendInput((UINT)cb.ninputs, cb.inputs, sizeof(INPUT));
 }
 
 # pragma endregion // Toggling-Active
 
 # pragma region Whitelisting
 
-void InitializeWmi()
+static void InitializeWmi()
 {
-    const TCHAR* error = TEXT("Failed to set up ability to detect if whitelisted programs are running. Quitting.");
+    const TCHAR *error = TEXT("Failed to initialize WMI: ") TCS_FMT TEXT(" returned %d. Quitting.");
+    HRESULT res;
 
     // Initializate the Windows security.
-    if (FAILED(CoInitializeEx(0, COINIT_MULTITHREADED)))
+    if (FAILED(res = CoInitializeEx(0, COINIT_MULTITHREADED)))
     {
-        LOG("CoInitializeEx failed.");
-        ThreadError(error);
+        LOG_ERROR("CoInitializeEx failed with res %ld.", res);
+        PANIC(error, TEXT("CoInitializeEx"), res);
     }
 
-    comInitialized = TRUE;
+    cb.comInitialized = TRUE;
 
-    if (FAILED(CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL)))
+    if (FAILED(res = CoInitializeSecurity(NULL, -1, NULL, NULL, RPC_C_AUTHN_LEVEL_DEFAULT, RPC_C_IMP_LEVEL_IMPERSONATE, NULL, EOAC_NONE, NULL)))
     {
-        LOG("CoInitializeSecurity failed.");
-        ThreadError(error);
+        LOG_ERROR("CoInitializeSecurity failed with res %ld.", res);
+        PANIC(error, TEXT("CoInitializeSecurity"), res);
     }
 
-    if (FAILED(CoCreateInstance(&CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (LPVOID*)&wbemLocator)))
+    if (FAILED(res = CoCreateInstance(&CLSID_WbemLocator, 0, CLSCTX_INPROC_SERVER, &IID_IWbemLocator, (LPVOID *)&cb.wbemLocator)))
     {
-        LOG("CoCreateInstance failed.");
-        ThreadError(error);
+        LOG_ERROR("CoCreateInstance failed with res %ld.", res);
+        PANIC(error, TEXT("CoCreateInstance"), res);
     }
 
-    if (FAILED(wbemLocator->lpVtbl->ConnectServer(wbemLocator, L"ROOT\\CIMV2", NULL, NULL, NULL, 0, NULL, NULL, &wbemServices)))
+    if (FAILED(res = cb.wbemLocator->lpVtbl->ConnectServer(cb.wbemLocator, L"ROOT\\CIMV2", NULL, NULL, NULL, 0, NULL, NULL, &cb.wbemServices)))
     {
-        LOG("ConnectServer failed.");
-        ThreadError(error);
+        LOG_ERROR("ConnectServer failed with res %ld.", res);
+        PANIC(error, TEXT("ConnectServer"), res);
     }
 }
 
-BSTR* FetchWhitelist(size_t* nprocs)
-{
-    FILE* whitelist;
-    BSTR* procCmds = NULL;
-    *nprocs = 0;
+// fmt must end with a %s where the error string goes.
+#define LOG_REGERROR(errcode, compiled, fmt, ...)                                   \
+    do {                                                                            \
+        char bufLogRegerror[MSG_LEN];                                               \
+        regerror((errcode), (compiled), bufLogRegerror, sizeof(bufLogRegerror));    \
+        LOG_WARN(fmt, ##__VA_ARGS__, bufLogRegerror);                               \
+    } while (FALSE)
 
-    if (_tfopen_s(&whitelist, TEXT("Whitelist.txt"), TEXT("r")) != 0)
+static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
+{
+    FILE *file = NULL;
+    WhitelistEntry *whitelist = NULL;
+    // Have to initialize these to *something* that isn't REG_OK.
+    int emptylineCompRes = REG_BADPAT;
+    int modlineCompRes = REG_BADPAT;
+    int normlineCompRes = REG_BADPAT;
+    int res;
+    *nwhitelist = 0;
+
+    if ((res = _tfopen_s(&file, filename, TEXT("r"))) != 0)
     {
-        // Defaulting to filtering just Netflix.
-        LOG("Couldn't open whitelist.");
-        return procCmds;
+        LOG_WARN("Couldn't open whitelist with error %s.", strerror(res));
+        if (res != ENOENT) WARN(NULL, TEXT("Failed to open whitelist: ") TCS_FMT TEXT(". Fix the problem then refresh."), _tcserror(res));
+        file = NULL; // Just to be sure.
+        goto bad;
+    }
+
+    regex_t emptylineRegex;
+    regex_t modlineRegex;
+    regex_t normlineRegex;
+    emptylineCompRes = regcomp(&emptylineRegex, "^\\s*$", REG_EXTENDED | REG_NOSUB);
+    modlineCompRes = regcomp(&modlineRegex, "^\\s*\\?\\?(\\S*)\\s*((\\s*\\S*)*)\\s*$", REG_EXTENDED);
+    normlineCompRes = regcomp(&normlineRegex, "^\\s*(\\S+(\\s*\\S+)*)\\s*$", REG_EXTENDED);
+
+    if (emptylineCompRes != REG_OK || modlineCompRes != REG_OK || normlineCompRes != REG_OK)
+    {
+        LOG_REGERROR(emptylineCompRes, &emptylineRegex, "emptylineRegex compilation result: %s.");
+        LOG_REGERROR(modlineCompRes, &modlineRegex, "modlineRegex compilation result: %s.");
+        LOG_REGERROR(normlineCompRes, &normlineRegex, "normlineRegex compilation result: %s.");
+        WARN(NULL, TEXT("Failed to load whitelist due to an internal problem. You can retry by hitting refresh."));
+        goto bad;
     }
 
     char buffer[1 << 13];
-    wchar_t wbuffer[sizeof(buffer)];
-    
-    while (fgets(buffer, sizeof(buffer), whitelist) != NULL)
-    {
-        char* line = StripWhitespace(buffer);
+    wchar_t wbuffer[_countof(buffer)];
+    int linenum = 0;
 
-        if (mbstowcs_s(NULL, wbuffer, _countof(wbuffer), line, _countof(wbuffer) - 1) != 0)
+    // Iterate over the file line by line.
+    while (fgets(buffer, sizeof(buffer), file) != NULL)
+    {
+        linenum++;
+
+        // fgets writes a newline to the buffer and this is the easiest way I was able to shake it off.
+        for (int i = strlen(buffer) - 1; i >= 0 && (buffer[i] == '\n' || buffer[i] == '\r'); i--) buffer[i] = '\0';
+        LOG("Checking whitelist line: %d line length: %lld contents: '%s'.", linenum, strlen(buffer), buffer);
+
+        // Check for empty lines, skip them.
+        res = regexec(&emptylineRegex, buffer, 0, NULL, 0);
+
+        if (res == REG_OK)
         {
-            LOG("Failed to convert command line %s", line);
+            LOG("Skipping line %d because it is empty.", linenum);
             continue;
         }
-        else
+
+        if (res != REG_NOMATCH)
         {
-            LOG("Adding to the whitelist: %s", line);
+            LOG_REGERROR(res, &emptylineRegex, "Line %d emptylineRegex exec result: %s.", linenum);
+            WARN(NULL, TEXT("Failed to load the whitelist due to an internal problem at line: %d. You can retry by hitting refresh."), linenum);
+            goto bad;
         }
 
-        procCmds = realloc(procCmds, ((*nprocs) + 1) * sizeof(BSTR));
-        procCmds[*nprocs] = SysAllocString(wbuffer);
-        (*nprocs)++;
+        // We'll write the entry to this variable then create a dynamically allocated copy.
+        // The reason is so if we get an error in the middle we don't have to worry about freeing that allocation.
+        WhitelistEntry entry = {0};
+
+        // Plenty of array size just to be safe.
+        regmatch_t matches[16];
+        regmatch_t *commandMatch = NULL;
+        res = regexec(&modlineRegex, buffer, _countof(matches), matches, 0);
+
+        if (res == REG_OK)
+        {
+            regmatch_t *flagsMatch = &matches[1];
+            commandMatch = &matches[2];
+
+            if (flagsMatch->rm_so == flagsMatch->rm_eo)
+            {
+                LOG_WARN("Line %d in the whitelist starts with ?? but has no flags.", linenum);
+                WARN(NULL, TEXT("Invalid whitelist line: %d - line starts with ?? but has no flags. Fix the problem then refresh."), linenum);
+                goto bad;
+            }
+
+            char isComment = FALSE;
+
+            for (char *c = &buffer[flagsMatch->rm_so]; c != &buffer[flagsMatch->rm_eo]; c++)
+            {
+                switch (*c)
+                {
+                    case 'S':
+                        entry.isSubstring = TRUE;
+                        break;
+                    case 'E':
+                        entry.isExclusive = TRUE;
+                        break;
+                    case 'I':
+                        // Keep iterating over flag characters even if this is a comment.
+                        isComment = TRUE;
+                        break;
+                    default:
+                        LOG_WARN("Invalid flag character: %c in line: %d.", *c, linenum);
+                        WARN(NULL, TEXT("Invalid whitelist line: %d - flag character: '%c' is unrecognized. Fix the problem then refresh."), linenum, *c);
+                        goto bad;
+                }
+            }
+
+            // If this is a comment line, skip it.
+            if (isComment)
+            {
+                LOG("Skipping line %d because it is a comment.", linenum);
+                continue;
+            }
+
+            if (commandMatch->rm_so == commandMatch->rm_eo)
+            {
+                LOG_WARN("Line %d in the whitelist has flags but no command.", linenum);
+                WARN(NULL, TEXT("Invalid whitelist line: %d - command is missing. Fix the problem then refresh."), linenum);
+                goto bad;
+            }
+        }
+        else if (res != REG_NOMATCH)
+        {
+            LOG_REGERROR(res, &modlineRegex, "Line %d modlineRegex exec result: %s.", linenum);
+            WARN(NULL, TEXT("Failed to load the whitelist due to an internal problem at line: %d. You can retry by hitting refresh."), linenum);
+            goto bad;
+        }
+        else // res == REG_NOMATCH. We'll try normlineRegex.
+        {
+            res = regexec(&normlineRegex, buffer, _countof(matches), matches, 0);
+            commandMatch = &matches[1];
+
+            if (res != REG_OK)
+            {
+                LOG_REGERROR(res, &modlineRegex, "Line %d normlineRegex exec result: %s.", linenum);
+                WARN(NULL, TEXT("Failed to load the whitelist due to an internal problem at line: %d. You can retry by hitting refresh."), linenum);
+                goto bad;
+            }
+        }
+
+        // Converting command to wchar.
+        if ((res = mbstowcs_s(NULL, wbuffer, _countof(wbuffer), &buffer[commandMatch->rm_so], commandMatch->rm_eo - commandMatch->rm_so)) != 0)
+        {
+            LOG_WARN("Received error '%s' when trying to convert line %d command %.*s.",
+                strerror(res), linenum, commandMatch->rm_eo - commandMatch->rm_so, &buffer[commandMatch->rm_so]);
+            WARN(NULL, TEXT("Failed to load the whitelist due to a problem at line: %d. It may contain unsupported characters. Fix the problem then refresh."), linenum);
+            goto bad;
+        }
+
+        entry.command = SysAllocString(wbuffer);
+
+        // Allocate new whitelist entry.
+        whitelist = realloc(whitelist, ((*nwhitelist) + 1) * sizeof(*whitelist));
+        whitelist[*nwhitelist] = entry;
+        (*nwhitelist)++;
+
+        LOG("Added to the whitelist: line: %d, isSubstring: %d, isExclusive: %d, command length: %lld command: '%ls'.",
+            linenum, entry.isSubstring, entry.isExclusive, wcslen(wbuffer), wbuffer);
     }
 
-    fclose(whitelist);
-    return procCmds;
+    // Skip bad.
+    goto ret;
+
+bad:
+    // Safe to pass NULL to SysFreeString (also to free).
+    for (size_t i = 0; whitelist != NULL && i < *nwhitelist; i++) SysFreeString(whitelist[i].command);
+    free(whitelist);
+    *nwhitelist = 0;
+    whitelist = NULL;
+ret:
+    if (emptylineCompRes == REG_OK) regfree(&emptylineRegex);
+    if (modlineCompRes == REG_OK) regfree(&modlineRegex);
+    if (normlineCompRes == REG_OK) regfree(&normlineRegex);
+    if (file != NULL) fclose(file);
+    return whitelist;
+}
+
+static char IsExclusiveExists(WhitelistEntry *whitelist, size_t nwhitelist)
+{
+    for (int i = 0; i < cb.nwhitelist; i++)
+    {
+        if (whitelist[i].isExclusive) return TRUE;
+    }
+
+    return FALSE;
 }
 
 // Thank god for StackOverflow for delivering this holy function : https://stackoverflow.com/a/9589788/12553917.
-char WhitelistedProcessIsRunning(BSTR* procCmds, size_t nprocs)
+static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, char *isWhitelistedRunning, char *isExclusiveRunning)
 {
-    if (nprocs == 0)
-    {
-        return FALSE;
-    }
-
-    IEnumWbemClassObject* enumWbem = NULL;
+    *isWhitelistedRunning = FALSE;
+    *isExclusiveRunning = FALSE;
+    if (nwhitelist == 0) return;
 
     // Run the WQL Query.
     // TODO: instead of iterating over all processes, be informed when a process is created or destroyed. Some interesting reading material on that:
@@ -298,102 +534,73 @@ char WhitelistedProcessIsRunning(BSTR* procCmds, size_t nprocs)
     // https://www.codeproject.com/Articles/11985/Hooking-the-native-API-and-controlling-process-cre
     // https://docs.microsoft.com/en-us/windows/win32/wmisdk/example--receiving-event-notifications-through-wmi-?redirectedfrom=MSDN
     // If this is too difficult to do from C, I can write it in C++ and call it from C. It shouldn't be too hard to set up.
-    if (FAILED(wbemServices->lpVtbl->ExecQuery(wbemServices, L"WQL",
-        L"SELECT CommandLine FROM Win32_Process",
-        WBEM_FLAG_FORWARD_ONLY, NULL, &enumWbem)))
-    {
-        return FALSE;
-    }
+    IEnumWbemClassObject *enumWbem = NULL;
+    if (FAILED(cb.wbemServices->lpVtbl->ExecQuery(cb.wbemServices, L"WQL", L"SELECT CommandLine FROM Win32_Process", WBEM_FLAG_FORWARD_ONLY, NULL, &enumWbem))) return;
 
     // Iterate over the enumerator.
-    if (enumWbem != NULL)
+    IWbemClassObject *result = NULL;
+    ULONG returnedCount = 0;
+
+    while (enumWbem->lpVtbl->Next(enumWbem, WBEM_INFINITE, 1, &result, &returnedCount) == S_OK)
     {
-        IWbemClassObject* result = NULL;
-        ULONG returnedCount = 0;
+        VARIANT commandLine;
 
-        while (enumWbem->lpVtbl->Next(enumWbem, WBEM_INFINITE, 1, &result, &returnedCount) == S_OK)
+        // Access the properties.
+        if (FAILED(result->lpVtbl->Get(result, L"CommandLine", 0, &commandLine, 0, 0))) goto next;
+        if (commandLine.vt == VT_NULL) goto next;
+
+        BSTR copy = SysAllocString(commandLine.bstrVal);
+        BSTR whitespaceless = StripLeadingTrailingWhitespaceWide(copy);
+
+        for (size_t i = 0; i < nwhitelist; i++)
         {
-            VARIANT commandLine;
+            WhitelistEntry *entry = &whitelist[i];
 
-            // Access the properties.
-            if (FAILED(result->lpVtbl->Get(result, L"CommandLine", 0, &commandLine, 0, 0)))
+            if (IsMatchingCommandLine(whitespaceless, entry))
             {
-                result->lpVtbl->Release(result);
-                continue;
+                if (entry->isExclusive) *isExclusiveRunning = TRUE;
+                else *isWhitelistedRunning = TRUE;
+
+                LOG("Equality with %s process found:\n\tWhitelist: %ls\n\tProcess:   %ls",
+                    entry->isExclusive ? "exclusive" : "whitelist",
+                    entry->command, commandLine.bstrVal);
             }
-
-            if (commandLine.vt != VT_NULL)
-            {
-                wchar_t* line;
-                size_t len = StripWhitespaceBSTR(commandLine.bstrVal, &line);
-
-                for (size_t i = 0; i < nprocs; i++)
-                {
-                    if (wcsncmp(procCmds[i], line, max(SysStringLen(procCmds[i]), len)) == 0)
-                    {
-                        LOG("EQUALITY FOUND\n%ls\n%ls", procCmds[i], line);
-                        result->lpVtbl->Release(result);
-                        enumWbem->lpVtbl->Release(enumWbem);
-                        return TRUE;
-                    }
-                }
-            }
-
-            result->lpVtbl->Release(result);
         }
+
+        SysFreeString(copy);
+
+next:
+        result->lpVtbl->Release(result);
     }
 
     // Release the resources.
     enumWbem->lpVtbl->Release(enumWbem);
-    return FALSE;
 }
 
-char* StripWhitespace(char* str)
+static wchar_t *StripLeadingTrailingWhitespaceWide(wchar_t *str)
 {
-    while (isspace(*str))
-    {
-        str++;
-    }
-
-    size_t len = strlen(str);
+    while (iswspace(*str)) str++;
+    size_t len = wcslen(str);
 
     if (len > 0)
     {
-        char* endstr = str + (len - 1);
-
-        while (isspace(*endstr))
-        {
-            *(endstr--) = '\0';
-        }
+        wchar_t *endstr = str + (len - 1);
+        while (iswspace(*endstr)) *(endstr--) = L'\0';
     }
 
     return str;
 }
 
-size_t StripWhitespaceBSTR(BSTR bstr, wchar_t** result)
+static char IsMatchingCommandLine(BSTR command, WhitelistEntry *entry)
 {
-    size_t len = SysStringLen(bstr);
-    wchar_t* start = bstr;
-    wchar_t* end = bstr + (len - 1);
-
-    while (iswspace(*start))
+    if (entry->isSubstring)
     {
-        start++;
+        return wcsstr(command, entry->command) != NULL;
     }
-
-    size_t newlen = len - (start - bstr);
-
-    if (len > 0)
+    else
     {
-        while (iswspace(*end))
-        {
-            newlen--;
-            end--;
-        }
+        return wcscmp(command, entry->command) == 0;
     }
-
-    *result = start;
-    return newlen;
 }
 
 #pragma endregion // Whitelisting.

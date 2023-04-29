@@ -1,2 +1,8 @@
-"C:\Windows\system32\wwahost.exe" -ServerName:Netflix.App.wwa
-"C:\Program Files\WindowsApps\AmazonVideo.PrimeVideo_1.0.84.0_x64__pwbj9vvecjh7j\PrimeVideo.exe" -ServerName:App.AppX21qthfa64w8vh9emhw9pfwse20vpg5n9.mca
+??I This is a comment. The line below whitelists Netflix, at least on my machine.
+"C:\WINDOWS\system32\wwahost.exe" -ServerName:Netflix.App.wwa
+   
+??I The line above is empty, which is allowed. The line below whitelists Amazon Prime Video, by matching against only part of the command line.
+??S PrimeVideo.exe" -ServerName:
+
+??I The line below makes it so AlwaysShadow will turn off InstantReplay unless Hades is running, again by comparing only part of the command line.
+??ES Hades.exe
