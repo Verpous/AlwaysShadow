@@ -423,6 +423,12 @@ static LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM
         case PROGRAM_REFRESH:
             LOG("Refresh button has been pressed.");
 
+            // Flushing the logs on refresh.
+            pthread_mutex_lock(&glbl.loglock);
+            fflush(glbl.logfile);
+            pthread_mutex_unlock(&glbl.loglock);
+
+            // Marking refresh for the fixer thread to detect.
             pthread_mutex_lock(&glbl.lock);
             glbl.isRefresh = TRUE;
             pthread_mutex_unlock(&glbl.lock);

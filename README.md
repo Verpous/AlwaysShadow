@@ -54,6 +54,8 @@ Feel free to open an issue for any request or problem. If you have a problem, pl
 %LOCALAPPDATA%/AlwaysShadow/output.log
 ```
 
+You should exit or refresh AlwaysShadow before using this file to make sure the logs are all flushed.
+
 ## Compilation instructions
 
 1. Install [MSYS2](https://www.msys2.org/)
