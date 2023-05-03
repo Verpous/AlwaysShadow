@@ -11,17 +11,17 @@
 #ifdef DEBUG_BUILD
 #define _LOG_INTERNAL(lvl, fmt, ...)                    \
     do {                                                \
-        pthread_mutex_lock(&glbl.loglock);                   \
+        pthread_mutex_lock(&glbl.loglock);              \
         _LOG_ONLY_INTERNAL((lvl), fmt, ##__VA_ARGS__);  \
-        fflush(glbl.logfile);                                \
-        pthread_mutex_unlock(&glbl.loglock);                 \
+        fflush(glbl.logfile);                           \
+        pthread_mutex_unlock(&glbl.loglock);            \
     } while (0)
 #else
 #define _LOG_INTERNAL(lvl, fmt, ...)                    \
     do {                                                \
-        pthread_mutex_lock(&glbl.loglock);                   \
+        pthread_mutex_lock(&glbl.loglock);              \
         _LOG_ONLY_INTERNAL((lvl), fmt, ##__VA_ARGS__);  \
-        pthread_mutex_unlock(&glbl.loglock);                 \
+        pthread_mutex_unlock(&glbl.loglock);            \
     } while (0)
 #endif
 
