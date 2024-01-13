@@ -45,6 +45,7 @@ LIBS += -ltre #       Dependency of regex.
 LIBS += -lintl #      Dependency of regex.
 LIBS += -liconv #     Dependency of regex.
 LIBS += -luuid #      For FOLDERID_LocalAppData.
+LIBS += -lshlwapi #   For path functions.
 
 # Object files we generate and link.
 OBJS += $(BIN)/main.o
@@ -70,7 +71,7 @@ all: write_flagfile $(PROG)
 
 # Prepares a zip for release.
 release: clean all
-	rm $(RELEASE)
+	rm -f $(RELEASE)
 	7z a -tzip $(RELEASE) ./$(PROG)
 
 # Compiles and runs. Output streams are redirected to a log.
@@ -92,7 +93,7 @@ clean:
 	rm -f $(BIN)/*
 
 # The following targets do the actual job of compiling and linking all the different files. You'll probably never run them directly.
-$(PROG): $(OBJS) | $(BIN)
+$(PROG): $(OBJS)
 	$(CC) $(LFlags) $(OBJS) $(LIBS) -o $@
 
 $(BIN)/%.o: $(SRC)/%.c $(FLAGFILE) | $(BIN)

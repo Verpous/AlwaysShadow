@@ -21,6 +21,7 @@ ENABLED_CONTEXT_MENU_ID MENU
         }
 
         MENUITEM "Refresh", PROGRAM_REFRESH
+        MENUITEM "Run at startup", PROGRAM_REGISTER_STARTUP
         MENUITEM "Exit", PROGRAM_EXIT
     }
 }
@@ -31,6 +32,7 @@ DISABLED_CONTEXT_MENU_ID MENU
     {
         MENUITEM "Enable AlwaysShadow", ENABLE_INDEFINITE
         MENUITEM "Refresh", PROGRAM_REFRESH
+        MENUITEM "Run at startup", PROGRAM_REGISTER_STARTUP
         MENUITEM "Exit", PROGRAM_EXIT
     }
 }

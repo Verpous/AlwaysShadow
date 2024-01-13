@@ -24,10 +24,10 @@
 #include <errno.h>      // For handling mkdir errors.
 #include <share.h>      // For opening a file with sharing options.
 #include <time.h>       // For logging date & time.
+#include <shlwapi.h>    // For dirnaming paths.
 
 #pragma region Declarations
 
-// The name of this program.
 #define PROGRAM_NAME TEXT("AlwaysShadow")
 
 // The WindowClass name of the main window.
@@ -41,6 +41,13 @@
 
 // The ID of the timer for enabling AlwaysShadow after a set time.
 #define ENABLE_TIMER_ID 2
+
+// The ID for a timer that allows us to flush the logs periodically.
+#define FLUSH_LOGS_TIMER_ID 3
+
+// Key + subkey for the registry path where we register to run at startup.
+#define STARTUP_REGISTRY_KEY HKEY_CURRENT_USER, TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+#define STARTUP_REGISTRY_VAL PROGRAM_NAME
 
 #define MAKE_TIME_OPTION(t) { .amount = t, .text = TEXT(#t) }
 
@@ -67,6 +74,7 @@ typedef struct
 } MainCb;
 
 static void InitializeLogging();
+static void InitializeCwd();
 static void InitializeWindows(HINSTANCE instanceHandle);
 static void RegisterMainWindowClass(HINSTANCE instanceHandle);
 static void UninitializeWindows(HINSTANCE instanceHandle);
@@ -78,6 +86,7 @@ static SYSTEMTIME AddMillisecondsToTime(const SYSTEMTIME *sysTime, UINT millis);
 static void AddNotificationIcon(HWND windowHandle);
 static void RemoveNotificationIcon(HWND windowHandle);
 static void ShowContextMenu(HWND hwnd, POINT pt);
+static char IsStartupRegistered();
 static void ShowEnabledContextMenu(HWND windowHandle, POINT point);
 static void ShowDisabledContextMenu(HWND windowHandle, POINT point);
 static void Panic(LPTSTR msg);
@@ -141,10 +150,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // The log file is a shared resource so we can't initialize it until we've ensured we're the only instance.
     InitializeLogging();
-    LOG("~~~~ STARTING A RUN: BUILD DATE %s %s ~~~~", __DATE__, __TIME__);
+    LOG("\n~~~~ STARTING A RUN: BUILD DATE %s %s ~~~~", __DATE__, __TIME__);
 
     cb.instanceHandle = hInstance;
 
+    // Order is important, need CWD to be set before spinning the fixer thread.
+    InitializeCwd();
     InitializeWindows(hInstance);
     MSG msg = {0};
 
@@ -206,6 +217,33 @@ static void InitializeLogging()
 exit:
     CoTaskMemFree(localAppDataPath);
     return;
+}
+
+// Set CWD to the exe's path, where the whitelist should be located. When Windows runs programs registered at startup, it does not run them from this directory.
+// There's an alternate solution that's better but cba to implement it:
+// create a shortcut and set the startup path to that shortcut. When shortcuts run, they do set the CWD we want.
+static void InitializeCwd()
+{
+    TCHAR path[MAX_PATH];
+    DWORD len = GetModuleFileName(NULL, path, _countof(path));
+
+    if (len == ERROR_INSUFFICIENT_BUFFER)
+    {
+        // Fail silently.
+        LOG_WARN("Failed to initialize CWD due to insufficient buffer size for path. Was able to fit: " TCS_FMT, path);
+        return;
+    }
+
+    // Dirname.
+    PathRemoveFileSpec(path);
+
+    if (!SetCurrentDirectory(path))
+    {
+        LOG_WARN("Failed to set CWD with error code: %#lx, path: " TCS_FMT, GetLastError(), path);
+        return;
+    }
+
+    LOG("Successfully set CWD to " TCS_FMT, path);
 }
 
 // Do not hold on to the returned string as it will change next time you call this function.
@@ -283,6 +321,7 @@ static LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM 
 
             AddNotificationIcon(windowHandle);
             SetTimer(windowHandle, CHECK_ALIVE_TIMER_ID, 1000, NULL);
+            SetTimer(windowHandle, FLUSH_LOGS_TIMER_ID, 600000, NULL);
             return 0;
         case WM_COMMAND:
             return ProcessMainWindowCommand(windowHandle, wparam, lparam);
@@ -314,12 +353,13 @@ static LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM 
                     {
                         LOG("Main thread found that fixer died. Quitting.");
                         KillTimer(windowHandle, CHECK_ALIVE_TIMER_ID);
-                        PANIC(TCS_FMT, glbl.errorMsg);
+                        PANIC(T_TCS_FMT, glbl.errorMsg);
                     }
-                    else if (issueWarning) {
+                    else if (issueWarning)
+                    {
                         pthread_mutex_lock(&glbl.lock);
                         glbl.issueWarning = FALSE;
-                        WARN(&glbl.lock, TCS_FMT, glbl.warningMsg);
+                        WARN(&glbl.lock, T_TCS_FMT, glbl.warningMsg);
                     }
 
                     break;
@@ -330,6 +370,12 @@ static LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM 
                     pthread_mutex_lock(&glbl.lock);
                     glbl.isDisabled = FALSE;
                     pthread_mutex_unlock(&glbl.lock);
+                    break;
+                case FLUSH_LOGS_TIMER_ID:
+                    // Without this most logs get lost.
+                    pthread_mutex_lock(&glbl.loglock);
+                    fflush(glbl.logfile);
+                    pthread_mutex_unlock(&glbl.loglock);
                     break;
             }
 
@@ -432,6 +478,57 @@ static LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM
             pthread_mutex_lock(&glbl.lock);
             glbl.isRefresh = TRUE;
             pthread_mutex_unlock(&glbl.lock);
+            break;
+        case PROGRAM_REGISTER_STARTUP:
+            // Already registered, want to unregister.
+            if (IsStartupRegistered())
+            {
+                LSTATUS ret = RegDeleteKeyValue(STARTUP_REGISTRY_KEY, STARTUP_REGISTRY_VAL);
+
+                if (ret != ERROR_SUCCESS)
+                {
+                    LOG_WARN("Failed to delete startup registry key with result: %#lx", ret);
+                    WARN(NULL, TEXT("Failed to unregister from startup. Error code: %#lx."), ret);
+                    break;
+                }
+
+                LOG("Successfully unregistered from startup");
+            }
+            else // Not registered, want to register.
+            {
+                // Note: looks like there's no need to quote the path to support spaces.
+                TCHAR path[MAX_PATH];
+                DWORD len = GetModuleFileName(NULL, path, _countof(path));
+
+                if (len == ERROR_INSUFFICIENT_BUFFER)
+                {
+                    LOG_WARN("Insufficient buffer size for path. Was able to fit: " TCS_FMT, path);
+                    WARN(NULL, TEXT("Failed to register for startup because the path to this program exceeds the maximum allowed length of %d. ")
+                               TEXT("Please place the program in a shorter path."), _countof(path));
+                    break;
+                }
+
+                HKEY hkey = NULL;
+                LSTATUS ret = RegCreateKey(STARTUP_REGISTRY_KEY, &hkey);
+
+                if (ret != ERROR_SUCCESS)
+                {
+                    LOG_WARN("Failed to create startup registry key with result: %#lx", ret);
+                    WARN(NULL, TEXT("Failed to register for startup due to a problem with creating the necessary registry key. Error code: %#lx."), ret);
+                    break;
+                }
+
+                ret = RegSetValueEx(hkey, STARTUP_REGISTRY_VAL, 0, REG_SZ, (BYTE *)path, (len + 1) * sizeof(*path));
+
+                if (ret != ERROR_SUCCESS)
+                {
+                    LOG_WARN("Failed to set startup registry value with result: %#lx", ret);
+                    WARN(NULL, TEXT("Failed to register for startup due to a problem with setting the necessary registry value. Error code: %#lx."), ret);
+                    break;
+                }
+
+                LOG("Successfully registered to startup");
+            }
             break;
     }
 
@@ -538,6 +635,31 @@ static void ShowContextMenu(HWND windowHandle, POINT point)
     }
 }
 
+static char IsStartupRegistered()
+{
+    LSTATUS ret = RegGetValue(STARTUP_REGISTRY_KEY, STARTUP_REGISTRY_VAL, RRF_RT_REG_SZ, NULL, NULL, NULL);
+
+    switch (ret)
+    {
+        case ERROR_SUCCESS:
+            return TRUE;
+        case ERROR_FILE_NOT_FOUND:
+            return FALSE;
+        default:
+            LOG_WARN("Failed to read registry key check if program is registered at startup with error code %#lx", ret);
+            return FALSE;
+    }
+}
+
+static void SetStartupCheckbox(HMENU hSubMenu)
+{
+    MENUITEMINFO mi = {0};
+    mi.cbSize = sizeof(MENUITEMINFO);
+    mi.fMask = MIIM_STATE;
+    mi.fState = IsStartupRegistered() ? MF_CHECKED : MF_UNCHECKED;
+    SetMenuItemInfo(hSubMenu, PROGRAM_REGISTER_STARTUP, FALSE, &mi);
+}
+
 static void ShowEnabledContextMenu(HWND windowHandle, POINT point)
 {
     HMENU hMenu = LoadMenu(cb.instanceHandle, MAKEINTRESOURCE(ENABLED_CONTEXT_MENU_ID));
@@ -556,21 +678,13 @@ static void ShowEnabledContextMenu(HWND windowHandle, POINT point)
         goto cleanup;
     }
 
+    SetStartupCheckbox(hSubMenu);
+
     // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
     SetForegroundWindow(windowHandle);
 
     // Respect menu drop alignment.
-    UINT uFlags = TPM_RIGHTBUTTON;
-
-    if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0)
-    {
-        uFlags |= TPM_RIGHTALIGN;
-    }
-    else
-    {
-        uFlags |= TPM_LEFTALIGN;
-    }
-
+    UINT uFlags = TPM_RIGHTBUTTON | (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0 ? TPM_RIGHTALIGN : TPM_LEFTALIGN);
     TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
 
 cleanup:
@@ -603,7 +717,7 @@ static void ShowDisabledContextMenu(HWND windowHandle, POINT point)
     {
         // Writing the text. End result should look like: "Enable AlwaysShadow (disabled until 18:32)"
         TCHAR txt[256];
-        _stprintf_s(txt, sizeof(txt) / sizeof(*txt), TEXT("Enable ") TCS_FMT TEXT(" (disabled until %u:%02u)"),
+        _stprintf_s(txt, sizeof(txt) / sizeof(*txt), TEXT("Enable ") T_TCS_FMT TEXT(" (disabled until %u:%02u)"),
             PROGRAM_NAME, cb.timerEndTime.wHour, cb.timerEndTime.wMinute);
 
         MENUITEMINFO mi = {0};
@@ -613,18 +727,10 @@ static void ShowDisabledContextMenu(HWND windowHandle, POINT point)
         SetMenuItemInfo(hSubMenu, ENABLE_INDEFINITE, FALSE, &mi);
     }
     
+    SetStartupCheckbox(hSubMenu);
+
     // Respect menu drop alignment.
-    UINT uFlags = TPM_RIGHTBUTTON;
-
-    if (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0)
-    {
-        uFlags |= TPM_RIGHTALIGN;
-    }
-    else
-    {
-        uFlags |= TPM_LEFTALIGN;
-    }
-
+    UINT uFlags = TPM_RIGHTBUTTON | (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0 ? TPM_RIGHTALIGN : TPM_LEFTALIGN);
     TrackPopupMenuEx(hSubMenu, uFlags, point.x, point.y, windowHandle, NULL);
     LOG("Opened disable context menu");
 

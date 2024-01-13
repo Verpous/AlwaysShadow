@@ -4,7 +4,7 @@ Shadowplay's Instant Replay feature is unreliable. You often find out it is turn
 
 ## Usage instructions
 
-Run AlwaysShadow.exe. I recommend [adding it to your startup programs](https://support.microsoft.com/en-us/windows/add-an-app-to-run-automatically-at-startup-in-windows-10-150da165-dcd9-7230-517b-cf3c295d89dd) so it will always be running when you turn on your computer. The program will make sure to turn Instant Replay back on should it ever turn off. Additionally, there is a system tray icon with options to disable or exit the program.
+Run AlwaysShadow.exe. The program will make sure to turn Instant Replay back on should it ever turn off. Additionally, there is a system tray icon with a few options. One of the options is to run at startup, which I recommend turning on.
 
 For this program to work, you have to turn on In-Game Overlay in your GeForce Experience settings.
 
@@ -46,7 +46,7 @@ Some programs (Netflix for example) may run in the background at all times, whic
 
 ## Download
 
-Simply click [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1.3/AlwaysShadow.zip), or you can go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and choose what to download. And of course, you can always clone the repo and compile it yourself.
+Simply go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and download the latest version, or any previous one. And of course, you can always clone the repo and compile it yourself.
 
 ## Compilation instructions
 
@@ -55,8 +55,6 @@ Simply click [here](https://github.com/Verpous/AlwaysShadow/releases/download/v1
 3. Add mingw-w64 and make's bin folders to PATH (should look something like "C:\msys64\mingw64\bin" and "C:\msys64\usr\bin", respectively)
 4. Clone this repository
 5. Run make inside the root directory of the repository. This will create the program executable named "AlwaysShadow.exe" inside a folder named "bin"
-
-You can run "make clean" to empty the bin folder if you want to recompile everything.
 
 The makefile includes some additional targets which are explained inside the makefile via comments.
 

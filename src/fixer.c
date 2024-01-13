@@ -65,9 +65,9 @@ static char IsMatchingCommandLine(BSTR command, WhitelistEntry *entry);
 
 static FixerCb cb = {0};
 
-// TODO: See about not triggering language switch (alt+shift) when pressing alt+shift+f10.
+// TODO: See about not triggering language switch (alt+shift) when pressing alt+shift+f10 (set state through that HTTP API instead?).
 // TODO: See about detecting that in-game overlay is off and notifying the user to turn it on.
-// TODO: See about detecting apps that are running but suspended.
+// TODO: See about detecting apps that are running but suspended (maybe instead detect apps that currently have no window or no foregrounded window?).
 
 void *FixerLoop(void *arg)
 {
@@ -294,7 +294,7 @@ static void ToggleInstantReplay()
 
 static void InitializeWmi()
 {
-    const TCHAR *error = TEXT("Failed to initialize WMI: ") TCS_FMT TEXT(" returned %d. Quitting.");
+    const TCHAR *error = TEXT("Failed to initialize WMI: ") T_TCS_FMT TEXT(" returned %d. Quitting.");
     HRESULT res;
 
     // Initializate the Windows security.
@@ -347,7 +347,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
     if ((res = _tfopen_s(&file, filename, TEXT("r"))) != 0)
     {
         LOG_WARN("Couldn't open whitelist with error %s.", strerror(res));
-        if (res != ENOENT) WARN(NULL, TEXT("Failed to open whitelist: ") TCS_FMT TEXT(". Fix the problem then refresh."), _tcserror(res));
+        if (res != ENOENT) WARN(NULL, TEXT("Failed to open whitelist: ") T_TCS_FMT TEXT(". Fix the problem then refresh."), _tcserror(res));
         file = NULL; // Just to be sure.
         goto bad;
     }

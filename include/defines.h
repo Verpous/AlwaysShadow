@@ -5,25 +5,22 @@
 #include <stdio.h>
 #include <pthread.h>
 
+#ifdef DEBUG_BUILD
+#define FFLUSH_DEBUG(file) fflush(file)
+#else
+#define FFLUSH_DEBUG(file)
+#endif
+
 #define _LOG_ONLY_INTERNAL(lvl, fmt, ...) \
     fprintf(glbl.logfile, "[%s] %s %s:%s:%d: " fmt "\n", (lvl), GetDateTimeStr(), __BASE_FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
-#ifdef DEBUG_BUILD
 #define _LOG_INTERNAL(lvl, fmt, ...)                    \
     do {                                                \
         pthread_mutex_lock(&glbl.loglock);              \
         _LOG_ONLY_INTERNAL((lvl), fmt, ##__VA_ARGS__);  \
-        fflush(glbl.logfile);                           \
+        FFLUSH_DEBUG(glbl.logfile);                     \
         pthread_mutex_unlock(&glbl.loglock);            \
     } while (0)
-#else
-#define _LOG_INTERNAL(lvl, fmt, ...)                    \
-    do {                                                \
-        pthread_mutex_lock(&glbl.loglock);              \
-        _LOG_ONLY_INTERNAL((lvl), fmt, ##__VA_ARGS__);  \
-        pthread_mutex_unlock(&glbl.loglock);            \
-    } while (0)
-#endif
 
 #define LOG(fmt, ...) _LOG_INTERNAL("INF", fmt, ##__VA_ARGS__)
 #define LOG_WARN(fmt, ...) _LOG_INTERNAL("WRN", fmt, ##__VA_ARGS__)
@@ -50,12 +47,15 @@
     } while (0)
 
 #ifdef _UNICODE
-#define TCS_FMT TEXT("%ls")
-#define TC_FMT TEXT("%lc")
+#define TCS_FMT "%ls"
+#define TC_FMT "%lc"
 #else
-#define TCS_FMT TEXT("%s")
-#define TC_FMT TEXT("%c")
+#define TCS_FMT "%s"
+#define TC_FMT "%c"
 #endif
+
+#define T_TCS_FMT TEXT(TCS_FMT)
+#define T_TC_FMT TEXT(TC_FMT)
 
 typedef struct
 {
