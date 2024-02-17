@@ -1,5 +1,5 @@
 // AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
-// Copyright (C) 2023 Aviv Edery.
+// Copyright (C) 2024 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -16,6 +16,7 @@
 
 #include "Resource.h"
 #include "defines.h"
+#include <winsock2.h>   // For libcurl, must be included before windows.h
 #include <windows.h>    // For winapi.
 #include <tchar.h>      // For dealing with unicode and ANSI strings.
 #include <pthread.h>    // For multithreading.
@@ -25,10 +26,14 @@
 #include <share.h>      // For opening a file with sharing options.
 #include <time.h>       // For logging date & time.
 #include <shlwapi.h>    // For dirnaming paths.
+#include <curl/curl.h>  // For checking if updates exist.
 
 #pragma region Declarations
 
 #define PROGRAM_NAME TEXT("AlwaysShadow")
+
+// If using a fork you might want to change this.
+#define GITHUB_NAME_WITH_OWNER "Verpous/AlwaysShadow"
 
 // The WindowClass name of the main window.
 #define WC_MAINWINDOW TEXT("MainWindow")
@@ -48,6 +53,14 @@
 // Key + subkey for the registry path where we register to run at startup.
 #define STARTUP_REGISTRY_KEY HKEY_CURRENT_USER, TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
 #define STARTUP_REGISTRY_VAL PROGRAM_NAME
+
+// Key + subkey for the registry path where we register to run at startup.
+#define UPDATES_REGISTRY_KEY HKEY_CURRENT_USER, TEXT("Software\\AlwaysShadow")
+#define UPDATES_REGISTRY_VAL TEXT("DontCheckForUpdates")
+
+// Key + subkey for the registry path where we store the squelch updates date.
+#define SQUELCH_DATE_REGISTRY_KEY HKEY_CURRENT_USER, TEXT("Software\\AlwaysShadow")
+#define SQUELCH_DATE_REGISTRY_VAL TEXT("SquelchDate")
 
 #define MAKE_TIME_OPTION(t) { .amount = t, .text = TEXT(#t) }
 
@@ -87,6 +100,13 @@ static void AddNotificationIcon(HWND windowHandle);
 static void RemoveNotificationIcon(HWND windowHandle);
 static void ShowContextMenu(HWND hwnd, POINT pt);
 static char IsStartupRegistered();
+static void SetStartupRegistry(char registered);
+static char IsCheckForUpdates();
+static void SetCheckForUpdates(char checkForUpdates);
+static char IsUpdatesSquelched();
+static void SquelchUpdates();
+static char IsUpdateExists();
+void CheckForUpdates(char isManualCheck);
 static void ShowEnabledContextMenu(HWND windowHandle, POINT point);
 static void ShowDisabledContextMenu(HWND windowHandle, POINT point);
 static void Panic(LPTSTR msg);
@@ -150,7 +170,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // The log file is a shared resource so we can't initialize it until we've ensured we're the only instance.
     InitializeLogging();
-    LOG("\n~~~~ STARTING A RUN: BUILD DATE %s %s ~~~~", __DATE__, __TIME__);
+    LOG("\n\n~~~~ STARTING A RUN: BUILD DATE %s %s ~~~~\n", __DATE__, __TIME__);
+    getstuff();
+    CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
+
+    if (res != CURLE_OK)
+    {
+        // curl_easy_strerror works even if init fails.
+        // We'll just sweep this failure under the rug and let the future calls to curl also fail.
+        // All the "check for updates" code is written to fail silently.
+        LOG_WARN("Failed to initialize curl with error: %s", curl_easy_strerror(res));
+    }
 
     cb.instanceHandle = hInstance;
 
@@ -322,6 +352,12 @@ static LRESULT CALLBACK MainWindowProcedure(HWND windowHandle, UINT msg, WPARAM 
             AddNotificationIcon(windowHandle);
             SetTimer(windowHandle, CHECK_ALIVE_TIMER_ID, 1000, NULL);
             SetTimer(windowHandle, FLUSH_LOGS_TIMER_ID, 600000, NULL);
+
+            if (IsCheckForUpdates() && !IsUpdatesSquelched())
+            {
+                CheckForUpdates(FALSE);
+            }
+            
             return 0;
         case WM_COMMAND:
             return ProcessMainWindowCommand(windowHandle, wparam, lparam);
@@ -481,54 +517,13 @@ static LRESULT ProcessMainWindowCommand(HWND windowHandle, WPARAM wparam, LPARAM
             break;
         case PROGRAM_REGISTER_STARTUP:
             // Already registered, want to unregister.
-            if (IsStartupRegistered())
-            {
-                LSTATUS ret = RegDeleteKeyValue(STARTUP_REGISTRY_KEY, STARTUP_REGISTRY_VAL);
-
-                if (ret != ERROR_SUCCESS)
-                {
-                    LOG_WARN("Failed to delete startup registry key with result: %#lx", ret);
-                    WARN(NULL, TEXT("Failed to unregister from startup. Error code: %#lx."), ret);
-                    break;
-                }
-
-                LOG("Successfully unregistered from startup");
-            }
-            else // Not registered, want to register.
-            {
-                // Note: looks like there's no need to quote the path to support spaces.
-                TCHAR path[MAX_PATH];
-                DWORD len = GetModuleFileName(NULL, path, _countof(path));
-
-                if (len == ERROR_INSUFFICIENT_BUFFER)
-                {
-                    LOG_WARN("Insufficient buffer size for path. Was able to fit: " TCS_FMT, path);
-                    WARN(NULL, TEXT("Failed to register for startup because the path to this program exceeds the maximum allowed length of %d. ")
-                               TEXT("Please place the program in a shorter path."), _countof(path));
-                    break;
-                }
-
-                HKEY hkey = NULL;
-                LSTATUS ret = RegCreateKey(STARTUP_REGISTRY_KEY, &hkey);
-
-                if (ret != ERROR_SUCCESS)
-                {
-                    LOG_WARN("Failed to create startup registry key with result: %#lx", ret);
-                    WARN(NULL, TEXT("Failed to register for startup due to a problem with creating the necessary registry key. Error code: %#lx."), ret);
-                    break;
-                }
-
-                ret = RegSetValueEx(hkey, STARTUP_REGISTRY_VAL, 0, REG_SZ, (BYTE *)path, (len + 1) * sizeof(*path));
-
-                if (ret != ERROR_SUCCESS)
-                {
-                    LOG_WARN("Failed to set startup registry value with result: %#lx", ret);
-                    WARN(NULL, TEXT("Failed to register for startup due to a problem with setting the necessary registry value. Error code: %#lx."), ret);
-                    break;
-                }
-
-                LOG("Successfully registered to startup");
-            }
+            SetStartupRegistry(!IsStartupRegistered());
+            break;
+        case PROGRAM_CHECK_UPDATES:
+            SetCheckForUpdates(!IsCheckForUpdates());
+            break;
+        case PROGRAM_CHECK_UPDATES_NOW:
+            CheckForUpdates(TRUE);
             break;
     }
 
@@ -646,18 +641,296 @@ static char IsStartupRegistered()
         case ERROR_FILE_NOT_FOUND:
             return FALSE;
         default:
-            LOG_WARN("Failed to read registry key check if program is registered at startup with error code %#lx", ret);
+            LOG_WARN("Failed to read registry key to check if program is registered at startup with error code %#lx", ret);
             return FALSE;
     }
 }
 
-static void SetStartupCheckbox(HMENU hSubMenu)
+static void SetStartupRegistry(char registered)
+{
+    if (registered)
+    {
+        // Note: looks like there's no need to quote the path to support spaces.
+        TCHAR path[MAX_PATH];
+        DWORD len = GetModuleFileName(NULL, path, _countof(path));
+
+        if (len == ERROR_INSUFFICIENT_BUFFER)
+        {
+            LOG_WARN("Insufficient buffer size for path. Was able to fit: " TCS_FMT, path);
+            WARN(NULL, TEXT("Failed to register for startup because the path to this program exceeds the maximum allowed length of %d. ")
+                        TEXT("Please place the program in a shorter path."), _countof(path));
+            return;
+        }
+
+        HKEY hkey = NULL;
+        LSTATUS ret = RegCreateKey(STARTUP_REGISTRY_KEY, &hkey);
+
+        if (ret != ERROR_SUCCESS)
+        {
+            LOG_WARN("Failed to create startup registry key with result: %#lx", ret);
+            WARN(NULL, TEXT("Failed to register for startup due to a problem with creating the necessary registry key. Error code: %#lx."), ret);
+            return;
+        }
+
+        ret = RegSetValueEx(hkey, STARTUP_REGISTRY_VAL, 0, REG_SZ, (BYTE *)path, (len + 1) * sizeof(*path));
+
+        if (ret != ERROR_SUCCESS)
+        {
+            LOG_WARN("Failed to set startup registry value with result: %#lx", ret);
+            WARN(NULL, TEXT("Failed to register for startup due to a problem with setting the necessary registry value. Error code: %#lx."), ret);
+            return;
+        }
+
+        LOG("Successfully registered to startup");
+    }
+    else // Unregister.
+    {
+        LSTATUS ret = RegDeleteKeyValue(STARTUP_REGISTRY_KEY, STARTUP_REGISTRY_VAL);
+
+        if (ret != ERROR_SUCCESS)
+        {
+            LOG_WARN("Failed to delete startup registry key with result: %#lx", ret);
+            WARN(NULL, TEXT("Failed to unregister from startup. Error code: %#lx."), ret);
+            return;
+        }
+
+        LOG("Successfully unregistered from startup");
+    }
+}
+
+static char IsCheckForUpdates()
+{
+    LSTATUS ret = RegGetValue(UPDATES_REGISTRY_KEY, UPDATES_REGISTRY_VAL, RRF_RT_REG_NONE, NULL, NULL, NULL);
+
+    switch (ret)
+    {
+        // The default is that there is nothing in the registry and we check for updates. If the value is in the registry, that means *not* to check.
+        case ERROR_SUCCESS:
+            return FALSE;
+        case ERROR_FILE_NOT_FOUND:
+            return TRUE;
+        default:
+            LOG_WARN("Failed to read registry key to check if program should check for updates with error code %#lx", ret);
+            return FALSE;
+    }
+}
+
+static void SetCheckForUpdates(char checkForUpdates)
+{
+    if (checkForUpdates)
+    {
+        LSTATUS ret = RegDeleteKeyValue(UPDATES_REGISTRY_KEY, UPDATES_REGISTRY_VAL);
+
+        if (ret != ERROR_SUCCESS)
+        {
+            LOG_WARN("Failed to delete updates registry key with result: %#lx", ret);
+            WARN(NULL, TEXT("Failed to subscribe to updates. Error code: %#lx."), ret);
+            return;
+        }
+
+        LOG("Successfully subscribed to updates");
+    }
+    else // Don't check for updates.
+    {
+        HKEY hkey = NULL;
+        LSTATUS ret = RegCreateKey(UPDATES_REGISTRY_KEY, &hkey);
+
+        if (ret != ERROR_SUCCESS)
+        {
+            LOG_WARN("Failed to create updates registry key with result: %#lx", ret);
+            WARN(NULL, TEXT("Failed to unsubscribe to updates due to a problem with creating the necessary registry key. Error code: %#lx."), ret);
+            return;
+        }
+
+        ret = RegSetValueEx(hkey, UPDATES_REGISTRY_VAL, 0, REG_NONE, NULL, 0);
+
+        if (ret != ERROR_SUCCESS)
+        {
+            LOG_WARN("Failed to set updates registry value with result: %#lx", ret);
+            WARN(NULL, TEXT("Failed unsubscribe to updates due to a problem with setting the necessary registry value. Error code: %#lx."), ret);
+            return;
+        }
+
+        LOG("Successfully unsubscribed to updates");
+    }
+}
+
+static char IsUpdatesSquelched()
+{
+    time_t squelchDate, now = time(NULL);
+    DWORD size = sizeof(squelchDate);
+    LSTATUS ret = RegGetValue(SQUELCH_DATE_REGISTRY_KEY, SQUELCH_DATE_REGISTRY_VAL, RRF_RT_REG_QWORD, NULL, &squelchDate, &size);
+
+    switch (ret)
+    {
+        case ERROR_SUCCESS:
+            LOG("Now: %lld, squelch date: %lld, updates are squelched: %d", now, squelchDate, now < squelchDate);
+            return now < squelchDate;
+        case ERROR_FILE_NOT_FOUND:
+            LOG("Updates are not squelched because registry key doesn't exist");
+            return FALSE;
+        default:
+            LOG_WARN("Failed to read registry key to check squelch date with error code %#lx", ret);
+            return FALSE;
+    }
+}
+
+static void SquelchUpdates()
+{
+    HKEY hkey = NULL;
+    LSTATUS ret = RegCreateKey(SQUELCH_DATE_REGISTRY_KEY, &hkey);
+
+    if (ret != ERROR_SUCCESS)
+    {
+        LOG_WARN("Failed to create squelch registry key with result: %#lx", ret);
+        return;
+    }
+
+    // Squelch updates for a month.
+    time_t squelchDate = time(NULL) + 60 * 60 * 24 * 30;
+    ret = RegSetValueEx(hkey, SQUELCH_DATE_REGISTRY_VAL, 0, REG_QWORD, (BYTE *)&squelchDate, sizeof(squelchDate));
+
+    if (ret != ERROR_SUCCESS)
+    {
+        LOG_WARN("Failed to set squelch registry value with result: %#lx", ret);
+        return;
+    }
+
+    LOG("Successfully squelched updates until unix ts: %lld", squelchDate);
+}
+
+typedef struct AppendableBuffer
+{
+    char *buf;
+    size_t len;
+    size_t curIdx;
+} AppendableBuffer;
+
+static size_t AppendToBuffer(char *data, size_t size, size_t nmemb, void *userdata)
+{
+    AppendableBuffer *appendable = (AppendableBuffer *)userdata;
+
+    // Supposed to return the amount of bytes actually taken care of. If you return less than nmemb, curl will understand it as an error.
+    // If getting too much data for the buffer, return 0 to indicate the error.
+    // Note we use '>=' and not '>' to make room for a null terminator.
+    if (appendable->curIdx + nmemb >= appendable->len)
+    {
+        LOG_WARN("Buffer of size %lld starting from %lld has no room for data of size %lld", appendable->len, appendable->curIdx, nmemb);
+        return 0;
+    }
+
+    // size is always 1 so nmemb is the size effectively.
+    memcpy(appendable->buf + appendable->curIdx, data, nmemb);
+    appendable->curIdx += nmemb;
+    appendable->buf[appendable->curIdx] = '\0';
+    return nmemb;
+}
+
+static char IsUpdateExists()
+{
+    // Note: curl recommends reusing handles, but I don't expect this function to be called more than once so we will not do that.
+    CURL *handle = curl_easy_init();
+    char isUpdateExist = FALSE;
+
+    if (handle == NULL)
+    {
+        LOG_WARN("curl_easy_init failed");
+        goto cleanup;
+    }
+
+#define CLEANUP_ON_CURL_FAILURE(curlCode, desc)                                             \
+    do {                                                                                    \
+        CURLcode res = (curlCode);                                                          \
+        if (res != CURLE_OK)                                                                \
+        {                                                                                   \
+            LOG_WARN("Failed to %s with error: %s", (desc), curl_easy_strerror(res));       \
+            goto cleanup;                                                                   \
+        }                                                                                   \
+    } while (0)
+
+#ifdef LATEST_TAG_OVERRIDE
+    char latest_tag[] = LATEST_TAG_OVERRIDE;
+#else
+    // This buffer only needs to be big enough for one integer really.
+    char latest_tag[256] = {0};
+    AppendableBuffer appendable = { .buf = latest_tag, .len = sizeof(latest_tag), .curIdx = 0 };
+
+    // Read the version.txt from GitHub, it contains the most recent version number.
+    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_URL, "https://raw.githubusercontent.com/" GITHUB_NAME_WITH_OWNER "/" VERSION_BRANCH_AND_FILE), "set CURLOPT_URL");
+    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_TIMEOUT, 5), "set CURLOPT_TIMEOUT");
+    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, AppendToBuffer), "set CURLOPT_WRITEFUNCTION");
+    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_WRITEDATA, &appendable), "set CURLOPT_WRITEDATA");
+    CLEANUP_ON_CURL_FAILURE(curl_easy_perform(handle), "read latest version number");
+#endif
+
+    // If the downloaded latest tag is not one of the tags that were known when this version was compiled, then an update exists.
+    isUpdateExist = TRUE;
+
+    for (int i = 0; i < tagsLen; i++)
+    {
+        if (strcmp(latest_tag, tags[i]) == 0)
+        {
+            isUpdateExist = FALSE;
+            LOG("Latest tag: %s EQUALS preexisting tag: %s", latest_tag, tags[i]);
+            // Don't break from the loop because we want to log them all.
+        }
+        else
+        {
+            LOG("Latest tag: %s DOESN'T EQUAL preexisting tag: %s", latest_tag, tags[i]);
+        }
+    }
+
+cleanup:
+    curl_easy_cleanup(handle); // Safe to call with NULL.
+    LOG("Update exists: %d", isUpdateExist);
+    return isUpdateExist;
+}
+
+void CheckForUpdates(char isManualCheck)
+{
+    if (!IsUpdateExists())
+    {
+        // If the user checked for updates manually, give him feedback even when there are no updates.
+        if (isManualCheck)
+        {
+            MessageBox(cb.mainWindowHandle, TEXT("You have the latest version. Enjoy!"), PROGRAM_NAME, MB_ICONINFORMATION | MB_OK);
+        }
+
+        return;
+    }
+
+    int choice = MessageBox(cb.mainWindowHandle, TEXT("A new version of AlwaysShadow is available. You may download it from the releases page. Go there?"),
+        PROGRAM_NAME, MB_ICONINFORMATION | MB_YESNO);
+
+    switch (choice)
+    {
+        case IDYES:
+            // Opens releases page in default browser.
+            ShellExecute(NULL, TEXT("open"), TEXT("https://github.com/") TEXT(GITHUB_NAME_WITH_OWNER) TEXT("/releases"), NULL, NULL, SW_SHOWNORMAL);
+            LOG("User decided to get update");
+            break;
+        case IDNO:
+            LOG("User decided not to update");
+            break;
+        default:
+            LOG_WARN("Unknown MessageBox result: %d", choice);
+            break;
+    }
+
+    // If this is an automatic check and an update was found, regardless of the user's choice about it, we want to squelch updates for a while.
+    if (!isManualCheck)
+    {
+        SquelchUpdates();
+    }
+}
+
+static void SetMenuCheckbox(HMENU hSubMenu, UINT checkbox, char checked)
 {
     MENUITEMINFO mi = {0};
     mi.cbSize = sizeof(MENUITEMINFO);
     mi.fMask = MIIM_STATE;
-    mi.fState = IsStartupRegistered() ? MF_CHECKED : MF_UNCHECKED;
-    SetMenuItemInfo(hSubMenu, PROGRAM_REGISTER_STARTUP, FALSE, &mi);
+    mi.fState = checked ? MF_CHECKED : MF_UNCHECKED;
+    SetMenuItemInfo(hSubMenu, checkbox, FALSE, &mi);
 }
 
 static void ShowEnabledContextMenu(HWND windowHandle, POINT point)
@@ -678,7 +951,8 @@ static void ShowEnabledContextMenu(HWND windowHandle, POINT point)
         goto cleanup;
     }
 
-    SetStartupCheckbox(hSubMenu);
+    SetMenuCheckbox(hSubMenu, PROGRAM_REGISTER_STARTUP, IsStartupRegistered());
+    SetMenuCheckbox(hSubMenu, PROGRAM_CHECK_UPDATES, IsCheckForUpdates());
 
     // Our window must be foreground before calling TrackPopupMenu or the menu will not disappear when the user clicks away.
     SetForegroundWindow(windowHandle);
@@ -727,7 +1001,8 @@ static void ShowDisabledContextMenu(HWND windowHandle, POINT point)
         SetMenuItemInfo(hSubMenu, ENABLE_INDEFINITE, FALSE, &mi);
     }
     
-    SetStartupCheckbox(hSubMenu);
+    SetMenuCheckbox(hSubMenu, PROGRAM_REGISTER_STARTUP, IsStartupRegistered());
+    SetMenuCheckbox(hSubMenu, PROGRAM_CHECK_UPDATES, IsCheckForUpdates());
 
     // Respect menu drop alignment.
     UINT uFlags = TPM_RIGHTBUTTON | (GetSystemMetrics(SM_MENUDROPALIGNMENT) != 0 ? TPM_RIGHTALIGN : TPM_LEFTALIGN);

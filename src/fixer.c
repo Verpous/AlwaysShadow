@@ -1,5 +1,5 @@
 // AlwaysShadow - a program for forcing Shadowplay's Instant Replay to stay on.
-// Copyright (C) 2023 Aviv Edery.
+// Copyright (C) 2024 Aviv Edery.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -346,7 +346,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
 
     if ((res = _tfopen_s(&file, filename, TEXT("r"))) != 0)
     {
-        LOG_WARN("Couldn't open whitelist with error %s.", strerror(res));
+        LOG_WARN("Couldn't open whitelist with error: %s.", strerror(res));
         if (res != ENOENT) WARN(NULL, TEXT("Failed to open whitelist: ") T_TCS_FMT TEXT(". Fix the problem then refresh."), _tcserror(res));
         file = NULL; // Just to be sure.
         goto bad;

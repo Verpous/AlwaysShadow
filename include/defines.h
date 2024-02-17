@@ -1,9 +1,15 @@
 #ifndef DEFINES_H
 #define DEFINES_H
 
+#include <winsock2.h>
 #include <windows.h>
 #include <stdio.h>
 #include <pthread.h>
+
+// Default value to please the IDE.
+#ifndef VERSION_BRANCH_AND_FILE
+#define VERSION_BRANCH_AND_FILE ""
+#endif
 
 #ifdef DEBUG_BUILD
 #define FFLUSH_DEBUG(file) fflush(file)
@@ -26,7 +32,7 @@
 #define LOG_WARN(fmt, ...) _LOG_INTERNAL("WRN", fmt, ##__VA_ARGS__)
 #define LOG_ERROR(fmt, ...) _LOG_INTERNAL("ERR", fmt, ##__VA_ARGS__)
 
-#define MSG_LEN (1 << 10)
+#define MSG_LEN (1 << 12)
 
 // Each module should have its own static function called Panic which takes a LPTSTR. This lets you pass format strings to that function.
 #define PANIC(fmt, ...)                                                     \
@@ -72,6 +78,8 @@ typedef struct
 } GlobalCb;
 
 extern GlobalCb glbl;
+extern const char *tags[];
+extern const size_t tagsLen;
 
 void *FixerLoop(void *arg);
 char *GetDateTimeStr();

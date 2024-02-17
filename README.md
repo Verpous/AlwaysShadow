@@ -61,11 +61,10 @@ The makefile includes some additional targets which are explained inside the mak
 
 ## Issues
 
-Feel free to open an issue for any request or problem. If you have a problem, please include the log file located at:
+Feel free to open an issue for any request or problem. When you do, please exit or refresh AlwaysShadow, then upload the log file located at:
 
 ```
 %LOCALAPPDATA%/AlwaysShadow/output.log
 ```
-You should exit or refresh AlwaysShadow before using this file to make sure the logs are all flushed.
 
 I am not affiliated with NVidia in any way.
