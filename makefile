@@ -175,7 +175,7 @@ publish:
 	git commit -m 'version $(TAG)'
 
 	git checkout master
-	git stash pop -q
+	git stash pop -q || true
 	git restore --staged .
 
 	gh release edit --draft $(TAG)

@@ -874,6 +874,8 @@ cleanup:
 
 void CheckForUpdates(char isManualCheck)
 {
+    LOG("Requested to check for updates, is manual: %d", isManualCheck);
+
     if (!IsUpdateExists())
     {
         // If the user checked for updates manually, give him feedback even when there are no updates.
