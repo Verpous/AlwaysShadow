@@ -36,11 +36,11 @@ The repo includes an example Whitelist.txt but **it is only for example**, as th
 
 ## Notes
 
-You will need to refresh this program (right click the icon in the notification bar and hit Refresh) if you do one of the following things:
+You will need to refresh this program (click the icon in the notification bar and hit Refresh) if you do one of the following things:
 1. Change the shortcut for toggling Instant Replay on/off in your GeForce Experience settings
 2. Create, delete, or modify your Whitelist.txt file
 
-AlwaysShadow turns on Instant Replay by simulating the keypresses for the shortcut that toggles it in GeForce Experience, which by default is Alt+Shift+F10. This may cause AlwaysShadow to change your keyboard language because the default shortcut for cycling between languages in Windows is Alt+Shift. To resolve this issue, it is recommended to go to your GeForce Experience settings and change the shortcut for toggling Instant Replay. I use Ctrl+Shift+F10. Remember that after changing the shortcut you will need to exit and relaunch this program.
+AlwaysShadow may turn on Instant Replay by simulating the keypresses for the shortcut that toggles it in GeForce Experience, which by default is Alt+Shift+F10. This is only a fallback method and may be rare, but it can cause AlwaysShadow to change your keyboard language because the default shortcut for cycling between languages in Windows is Alt+Shift. To resolve this issue, it is recommended to go to your GeForce Experience settings and change the shortcut for toggling Instant Replay. I use Ctrl+Shift+F10. Remember that after changing the shortcut you will need to exit and relaunch this program.
 
 Some programs (Netflix for example) may run in the background at all times, which means if you whitelist them AlwaysShadow will see them as always running. You can disable these programs running in the background in [Windows settings](https://support.microsoft.com/en-us/windows/windows-background-apps-and-your-privacy-83f2de44-d2d9-2b29-4649-2afe0913360a).
 
@@ -57,7 +57,6 @@ Simply go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and do
 5. Run make inside the root directory of the repository. This will create the program executable named "AlwaysShadow.exe" inside a folder named "bin"
 
 The makefile includes some additional targets which are explained inside the makefile via comments.
-
 
 ## Issues
 

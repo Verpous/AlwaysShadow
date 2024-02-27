@@ -26,6 +26,9 @@ TAGSFILE:=$(BIN)/tags.txt
 VERSIONFILE:=version.txt
 VERSIONBRANCH:=version
 
+# Implement a fallback because I don't want gh to be a mandatory dependency for anything other than make release.
+GITHUB_NAME_WITH_OWNER:=$(shell gh repo view --json nameWithOwner --jq '.[]' 2> /dev/null || echo Verpous/AlwaysShadow)
+
 YELLOW_FG:=$(shell tput setaf 3)
 NOCOLOR:=$(shell tput sgr0)
 
@@ -44,15 +47,16 @@ DEPENDS:=$(wildcard $(BIN)/*.d)
 
 # The style of commenting below may seem funny but there's a reason, it's so the alignment spacing doesn't make the output ugly.
 # C compiler flags.
-CFLAGS += -c #                          Compile, duh.
-CFLAGS += -I $(INCL) #                  Search for #includes in this folder.
-CFLAGS += -Wall #                       All warnings (minus the ones we'll subtract now).
-CFLAGS += -Wno-unknown-pragmas #        For getting rid of warnings about regions in the code.
-CFLAGS += -Wno-unused-function #        Some functions aren't used depending on #ifdefs.
-CFLAGS += -fmacro-prefix-map=$(SRC)/= # Makes it so in the logs only basenames of files are printed.
-CFLAGS += -MMD -MP #                    Generate *.d files, used for detecting if we need to recompile due to a change in included headers.
-CFLAGS += -D CURL_STATICLIB #           Mandatory for statically linking curl.
-CFLAGS += -D VERSION_BRANCH_AND_FILE=\"$(VERSIONBRANCH)/$(VERSIONFILE)\" # For downloading the latest version tag.
+CFLAGS += -c #							Compile, duh.
+CFLAGS += -I $(INCL) #					Search for #includes in this folder.
+CFLAGS += -Wall #						All warnings (minus the ones we'll subtract now).
+CFLAGS += -Wno-unknown-pragmas #		For getting rid of warnings about regions in the code.
+CFLAGS += -Wno-unused-function #		Some functions aren't used depending on #ifdefs.
+CFLAGS += -fmacro-prefix-map=$(SRC)/= #	Makes it so in the logs only basenames of files are printed.
+CFLAGS += -MMD -MP #					Generate *.d files, used for detecting if we need to recompile due to a change in included headers.
+CFLAGS += -D CURL_STATICLIB #			Mandatory for statically linking curl.
+CFLAGS += -D GITHUB_NAME_WITH_OWNER=\"$(GITHUB_NAME_WITH_OWNER)\" # 		For building links to the GitHub repo.
+CFLAGS += -D VERSION_BRANCH_AND_FILE=\"$(VERSIONBRANCH)/$(VERSIONFILE)\" #	For downloading the latest version tag.
 
 # Linker flags.
 LFLAGS += -Wall #     All warnings.
@@ -129,7 +133,7 @@ printvar-%:
 	@printf "%s%-20s%s = %s\n" "$(YELLOW_FG)" "$*" "$(NOCOLOR)" "$($*)"
 
 # Creates a release inside a zip and pushes it to GitHub.
-release: clean release_pre_build 
+release: clean release_pre_build all
 	rm -f $(RELEASE)
 	7z a -tzip $(RELEASE) ./$(PROG)
 	gh release upload $$(./make_helpers.sh latest_release tagName) $(RELEASE)

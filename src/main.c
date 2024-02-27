@@ -32,9 +32,6 @@
 
 #define PROGRAM_NAME TEXT("AlwaysShadow")
 
-// If using a fork you might want to change this.
-#define GITHUB_NAME_WITH_OWNER "Verpous/AlwaysShadow"
-
 // The WindowClass name of the main window.
 #define WC_MAINWINDOW TEXT("MainWindow")
 
@@ -171,7 +168,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // The log file is a shared resource so we can't initialize it until we've ensured we're the only instance.
     InitializeLogging();
     LOG("\n\n~~~~ STARTING A RUN: BUILD DATE %s %s ~~~~\n", __DATE__, __TIME__);
-    getstuff();
     CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
 
     if (res != CURLE_OK)
@@ -799,7 +795,7 @@ static void SquelchUpdates()
     LOG("Successfully squelched updates until unix ts: %lld", squelchDate);
 }
 
-typedef struct AppendableBuffer
+typedef struct
 {
     char *buf;
     size_t len;
@@ -838,16 +834,6 @@ static char IsUpdateExists()
         goto cleanup;
     }
 
-#define CLEANUP_ON_CURL_FAILURE(curlCode, desc)                                             \
-    do {                                                                                    \
-        CURLcode res = (curlCode);                                                          \
-        if (res != CURLE_OK)                                                                \
-        {                                                                                   \
-            LOG_WARN("Failed to %s with error: %s", (desc), curl_easy_strerror(res));       \
-            goto cleanup;                                                                   \
-        }                                                                                   \
-    } while (0)
-
 #ifdef LATEST_TAG_OVERRIDE
     char latest_tag[] = LATEST_TAG_OVERRIDE;
 #else
@@ -856,11 +842,11 @@ static char IsUpdateExists()
     AppendableBuffer appendable = { .buf = latest_tag, .len = sizeof(latest_tag), .curIdx = 0 };
 
     // Read the version.txt from GitHub, it contains the most recent version number.
-    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_URL, "https://raw.githubusercontent.com/" GITHUB_NAME_WITH_OWNER "/" VERSION_BRANCH_AND_FILE), "set CURLOPT_URL");
-    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_TIMEOUT, 5), "set CURLOPT_TIMEOUT");
-    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, AppendToBuffer), "set CURLOPT_WRITEFUNCTION");
-    CLEANUP_ON_CURL_FAILURE(curl_easy_setopt(handle, CURLOPT_WRITEDATA, &appendable), "set CURLOPT_WRITEDATA");
-    CLEANUP_ON_CURL_FAILURE(curl_easy_perform(handle), "read latest version number");
+    HANDLE_CURL_ERROR(cleanup, curl_easy_setopt(handle, CURLOPT_URL, "https://raw.githubusercontent.com/" GITHUB_NAME_WITH_OWNER "/" VERSION_BRANCH_AND_FILE), "set CURLOPT_URL");
+    HANDLE_CURL_ERROR(cleanup, curl_easy_setopt(handle, CURLOPT_TIMEOUT, 5), "set CURLOPT_TIMEOUT");
+    HANDLE_CURL_ERROR(cleanup, curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, AppendToBuffer), "set CURLOPT_WRITEFUNCTION");
+    HANDLE_CURL_ERROR(cleanup, curl_easy_setopt(handle, CURLOPT_WRITEDATA, &appendable), "set CURLOPT_WRITEDATA");
+    HANDLE_CURL_ERROR(cleanup, curl_easy_perform(handle), "read latest version number");
 #endif
 
     // If the downloaded latest tag is not one of the tags that were known when this version was compiled, then an update exists.
@@ -871,12 +857,12 @@ static char IsUpdateExists()
         if (strcmp(latest_tag, tags[i]) == 0)
         {
             isUpdateExist = FALSE;
-            LOG("Latest tag: %s EQUALS preexisting tag: %s", latest_tag, tags[i]);
+            LOG("Latest tag: '%s' EQUALS preexisting tag: '%s'", latest_tag, tags[i]);
             // Don't break from the loop because we want to log them all.
         }
         else
         {
-            LOG("Latest tag: %s DOESN'T EQUAL preexisting tag: %s", latest_tag, tags[i]);
+            LOG("Latest tag: '%s' DOESN'T EQUAL preexisting tag: '%s'", latest_tag, tags[i]);
         }
     }
 

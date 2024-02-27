@@ -6,9 +6,13 @@
 #include <stdio.h>
 #include <pthread.h>
 
-// Default value to please the IDE.
+// Macros defined via CFLAGS need a default value to please the IDE.
 #ifndef VERSION_BRANCH_AND_FILE
 #define VERSION_BRANCH_AND_FILE ""
+#endif
+
+#ifndef GITHUB_NAME_WITH_OWNER
+#define GITHUB_NAME_WITH_OWNER ""
 #endif
 
 #ifdef DEBUG_BUILD
@@ -62,6 +66,16 @@
 
 #define T_TCS_FMT TEXT(TCS_FMT)
 #define T_TC_FMT TEXT(TC_FMT)
+
+#define HANDLE_CURL_ERROR(label, curlCode, desc)                                            \
+    do {                                                                                    \
+        CURLcode _res = (curlCode);                                                         \
+        if (_res != CURLE_OK)                                                               \
+        {                                                                                   \
+            LOG_WARN("Failed to %s with error: %s", (desc), curl_easy_strerror(_res));      \
+            goto label;                                                                     \
+        }                                                                                   \
+    } while (0)
 
 typedef struct
 {

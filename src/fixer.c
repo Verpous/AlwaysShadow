@@ -15,12 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "defines.h"
+#include "cJSON.h"      // For parsing the file with the port and secret for Shadowplay's local server.
 #include <tchar.h>      // For dealing with unicode and ANSI strings.
 #include <pthread.h>    // For multithreading.
 #include <unistd.h>     // For sleep.
 #include <wbemidl.h>    // For getting the command line of running processes.
 #include <oleauto.h>    // For working with BSTRs.
 #include <regex.h>      // For parsing the whitelist.
+#include <curl/curl.h>  // For sending requests to Shadowplay's local server which toggles recording on and off.
 
 // This came with the whitelisting function which I dare not touch.
 #define _WIN32_DCOM
@@ -41,6 +43,9 @@ typedef struct
     WhitelistEntry *whitelist;
     char isExclusiveExists;
 
+    struct curl_slist *headers;
+    CURL *curl;
+
     char comInitialized;
     IWbemLocator *wbemLocator;
     IWbemServices *wbemServices;
@@ -54,7 +59,12 @@ static char IsInstantReplayOn();
 
 static INPUT *FetchToggleShortcut(size_t *ninputs);
 static void CreateInput(INPUT *input, WORD vkey, char isDown);
-static void ToggleInstantReplay();
+static void ToggleInstantReplay(char currentState);
+static void ToggleInstantReplayByKeyboardShortcut();
+
+static void ReleaseCurlResources();
+static char FetchServerInfo(CURL **handleOut, struct curl_slist **headersOut);
+static char SetInstantReplayByPostRequest(char state);
 
 static void InitializeWmi();
 static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist);
@@ -65,9 +75,10 @@ static char IsMatchingCommandLine(BSTR command, WhitelistEntry *entry);
 
 static FixerCb cb = {0};
 
-// TODO: See about not triggering language switch (alt+shift) when pressing alt+shift+f10 (set state through that HTTP API instead?).
 // TODO: See about detecting that in-game overlay is off and notifying the user to turn it on.
 // TODO: See about detecting apps that are running but suspended (maybe instead detect apps that currently have no window or no foregrounded window?).
+// TODO: Apparently the Shadowplay server has TONS of functions, we could use it to get the settings, maybe finally check if in-game overlay is off?
+//       They're all in C:\Program Files (x86)\NVIDIA Corporation\NvNode\NvShadowPlayAPI.js
 
 void *FixerLoop(void *arg)
 {
@@ -112,7 +123,7 @@ void *FixerLoop(void *arg)
             (isInstantReplayOn && cb.isExclusiveExists && !isExclusiveRunning)) // Conditions for toggling OFF.
         {
             LOG("Toggling because: isInstantReplayOn %d, isExclusiveExists %d, isExclusiveRunning %d", isInstantReplayOn, cb.isExclusiveExists, isExclusiveRunning);
-            ToggleInstantReplay();
+            ToggleInstantReplay(isInstantReplayOn);
         }
     }
     
@@ -151,6 +162,16 @@ static void Warn(LPTSTR msg)
     }
 }
 
+static void ReleaseCurlResources()
+{
+    // These are safe to call with NULL.
+    curl_slist_free_all(cb.headers);
+    curl_easy_cleanup(cb.curl);
+    
+    cb.headers = NULL;
+    cb.curl = NULL;
+}
+
 static void ReleaseResources(char freeWmi)
 {
     // This program does a sloppy job of cleanup.
@@ -169,6 +190,8 @@ static void ReleaseResources(char freeWmi)
         cb.comInitialized = FALSE;
     }
 
+    ReleaseCurlResources();
+
     for (size_t i = 0; i < cb.nwhitelist; i++) SysFreeString(cb.whitelist[i].command);
     free(cb.whitelist);
     free(cb.inputs);
@@ -185,6 +208,7 @@ static void LoadResources(char loadWmi)
     cb.inputs = FetchToggleShortcut(&cb.ninputs);
     cb.whitelist = FetchWhitelist(TEXT("Whitelist.txt"), &cb.nwhitelist);
     cb.isExclusiveExists = IsExclusiveExists(cb.whitelist, cb.nwhitelist);
+    FetchServerInfo(&cb.curl, &cb.headers);
 }
 
 #pragma region Checking-Active
@@ -210,6 +234,120 @@ static char IsInstantReplayOn()
 #pragma endregion // Checking-Active
 
 #pragma region Toggling-Active
+
+static const char *cJSON_GetErrorPtrSafe()
+{
+    const char *error = cJSON_GetErrorPtr();
+    return error == NULL ? "N/A" : error;
+}
+
+// Big thanks to PolicyPuma 4 for this function: https://github.com/Verpous/AlwaysShadow/issues/1#issuecomment-1474938711.
+static char FetchServerInfo(CURL **handleOut, struct curl_slist **headersOut)
+{
+    HANDLE mapHandle = OpenFileMapping(FILE_MAP_READ, FALSE, TEXT("{8BA1E16C-FC54-4595-9782-E370A5FBE8DA}"));
+    LPVOID mapView = NULL;
+    cJSON *infoJson = NULL;
+    CURL *handle = NULL;
+    struct curl_slist *headers = NULL;
+    char success = TRUE;
+
+    if (mapHandle == NULL)
+    {
+        LOG_WARN("Failed to open the file with the port and secret, error code: %#lx", GetLastError());
+        goto error;
+    }
+
+    mapView = MapViewOfFile(mapHandle, FILE_MAP_READ, 0, 0, 0);
+
+    if (mapView == NULL)
+    {
+        LOG_WARN("Failed to map view of the file with the port and secret, error code: %#lx", GetLastError());
+        goto error;
+    }
+
+    infoJson = cJSON_Parse((char *)mapView);
+
+    if (infoJson == NULL)
+    {
+        LOG_WARN("Failed to parse JSON with error: %s", cJSON_GetErrorPtrSafe());
+        goto error;
+    }
+    
+    cJSON *portJson = cJSON_GetObjectItem(infoJson, "port");
+    cJSON *secretJson = cJSON_GetObjectItem(infoJson, "secret");
+
+    if (portJson == NULL || secretJson == NULL)
+    {
+        LOG_WARN("Failed to get port and/or secret from the JSON. port = %p, secret = %p", portJson, secretJson);
+        goto error;
+    }
+    
+    if (!cJSON_IsNumber(portJson) || !cJSON_IsString(secretJson))
+    {
+        LOG_WARN("One of port or secret has the wrong type. port type = %#x (should be %#x), secret type = %#x (should be %#x)",
+            portJson->type, cJSON_Number, secretJson->type, cJSON_String);
+        goto error;
+    }
+
+    int port = portJson->valueint;
+    char *secret = secretJson->valuestring;
+    LOG("Shadowplay server port: %d, secret: '%s'", port, secret);
+
+    handle = curl_easy_init();
+
+    if (handle == NULL)
+    {
+        LOG_WARN("Failed to init curl handle");
+        goto error;
+    }
+
+    HANDLE_CURL_ERROR(error, curl_easy_setopt(handle, CURLOPT_TIMEOUT, 5), "set CURLOPT_TIMEOUT");
+
+    char buf[256];
+    sprintf(buf, "http://localhost:%d/ShadowPlay/v.1.0/InstantReplay/Enable", port);
+    HANDLE_CURL_ERROR(error, curl_easy_setopt(handle, CURLOPT_URL, buf), "set CURLOPT_URL");
+
+    sprintf(buf, "X_LOCAL_SECURITY_COOKIE: %s", secret);
+    headers = curl_slist_append(NULL, buf);
+    HANDLE_CURL_ERROR(error, curl_easy_setopt(handle, CURLOPT_HTTPHEADER, headers), "set CURLOPT_HTTPHEADER");
+
+    *headersOut = headers;
+    *handleOut = handle;
+    goto cleanup;
+
+error:
+    success = FALSE;
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(handle);
+cleanup:
+    if (mapHandle != NULL) CloseHandle(mapHandle);
+    if (mapView != NULL) UnmapViewOfFile(mapView);
+    cJSON_Delete(infoJson);
+    return success;
+}
+
+static char SetInstantReplayByPostRequest(char state)
+{
+    if (cb.curl == NULL && !FetchServerInfo(&cb.curl, &cb.headers))
+    {
+        LOG_WARN("Failed to set state: %d because the handle info couldn't be fetched", state);
+        return FALSE;
+    }
+
+    char buf[256];
+    sprintf(buf, "{\"status\": %s}", state ? "true" : "false");
+    curl_easy_setopt(cb.curl, CURLOPT_POSTFIELDS, buf);
+    CURLcode res = curl_easy_perform(cb.curl);
+
+    if (res != CURLE_OK)
+    {
+        LOG_WARN("Failed to set state: %d due to POST error: %s", state, curl_easy_strerror(res));
+        ReleaseCurlResources();
+        return FALSE;
+    }
+
+    return TRUE;
+}
 
 static INPUT *FetchToggleShortcut(size_t *ninputs)
 {
@@ -283,9 +421,20 @@ static void CreateInput(INPUT *input, WORD vkey, char isDown)
     input->ki.dwFlags = isDown ? 0 : KEYEVENTF_KEYUP;
 }
 
-static void ToggleInstantReplay()
+static void ToggleInstantReplayByKeyboardShortcut()
 {
     SendInput((UINT)cb.ninputs, cb.inputs, sizeof(INPUT));
+}
+
+static void ToggleInstantReplay(char currentState)
+{
+    // The CURL method is preferable because the keyboard shortcut might have inadvertent side effects,
+    // like cycling the user's keyboard language (the default shortcut Alt+Shift+F10 has Alt+Shift in it).
+    // But since the keyboard method was already implemented, might as well keep it as a fallback.
+    if (!SetInstantReplayByPostRequest(!currentState))
+    {
+        ToggleInstantReplayByKeyboardShortcut();
+    }
 }
 
 # pragma endregion // Toggling-Active
@@ -349,7 +498,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
         LOG_WARN("Couldn't open whitelist with error: %s.", strerror(res));
         if (res != ENOENT) WARN(NULL, TEXT("Failed to open whitelist: ") T_TCS_FMT TEXT(". Fix the problem then refresh."), _tcserror(res));
         file = NULL; // Just to be sure.
-        goto bad;
+        goto error;
     }
 
     regex_t emptylineRegex;
@@ -365,7 +514,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
         LOG_REGERROR(modlineCompRes, &modlineRegex, "modlineRegex compilation result: %s.");
         LOG_REGERROR(normlineCompRes, &normlineRegex, "normlineRegex compilation result: %s.");
         WARN(NULL, TEXT("Failed to load whitelist due to an internal problem. You can retry by hitting refresh."));
-        goto bad;
+        goto error;
     }
 
     char buffer[1 << 13];
@@ -394,7 +543,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
         {
             LOG_REGERROR(res, &emptylineRegex, "Line %d emptylineRegex exec result: %s.", linenum);
             WARN(NULL, TEXT("Failed to load the whitelist due to an internal problem at line: %d. You can retry by hitting refresh."), linenum);
-            goto bad;
+            goto error;
         }
 
         // We'll write the entry to this variable then create a dynamically allocated copy.
@@ -415,7 +564,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
             {
                 LOG_WARN("Line %d in the whitelist starts with ?? but has no flags.", linenum);
                 WARN(NULL, TEXT("Invalid whitelist line: %d - line starts with ?? but has no flags. Fix the problem then refresh."), linenum);
-                goto bad;
+                goto error;
             }
 
             char isComment = FALSE;
@@ -437,7 +586,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
                     default:
                         LOG_WARN("Invalid flag character: %c in line: %d.", *c, linenum);
                         WARN(NULL, TEXT("Invalid whitelist line: %d - flag character: '%c' is unrecognized. Fix the problem then refresh."), linenum, *c);
-                        goto bad;
+                        goto error;
                 }
             }
 
@@ -452,14 +601,14 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
             {
                 LOG_WARN("Line %d in the whitelist has flags but no command.", linenum);
                 WARN(NULL, TEXT("Invalid whitelist line: %d - command is missing. Fix the problem then refresh."), linenum);
-                goto bad;
+                goto error;
             }
         }
         else if (res != REG_NOMATCH)
         {
             LOG_REGERROR(res, &modlineRegex, "Line %d modlineRegex exec result: %s.", linenum);
             WARN(NULL, TEXT("Failed to load the whitelist due to an internal problem at line: %d. You can retry by hitting refresh."), linenum);
-            goto bad;
+            goto error;
         }
         else // res == REG_NOMATCH. We'll try normlineRegex.
         {
@@ -470,7 +619,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
             {
                 LOG_REGERROR(res, &modlineRegex, "Line %d normlineRegex exec result: %s.", linenum);
                 WARN(NULL, TEXT("Failed to load the whitelist due to an internal problem at line: %d. You can retry by hitting refresh."), linenum);
-                goto bad;
+                goto error;
             }
         }
 
@@ -480,7 +629,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
             LOG_WARN("Received error '%s' when trying to convert line %d command %.*s.",
                 strerror(res), linenum, commandMatch->rm_eo - commandMatch->rm_so, &buffer[commandMatch->rm_so]);
             WARN(NULL, TEXT("Failed to load the whitelist due to a problem at line: %d. It may contain unsupported characters. Fix the problem then refresh."), linenum);
-            goto bad;
+            goto error;
         }
 
         entry.command = SysAllocString(wbuffer);
@@ -495,15 +644,15 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
     }
 
     // Skip bad.
-    goto ret;
+    goto exit;
 
-bad:
+error:
     // Safe to pass NULL to SysFreeString (also to free).
     for (size_t i = 0; whitelist != NULL && i < *nwhitelist; i++) SysFreeString(whitelist[i].command);
     free(whitelist);
     *nwhitelist = 0;
     whitelist = NULL;
-ret:
+exit:
     if (emptylineCompRes == REG_OK) regfree(&emptylineRegex);
     if (modlineCompRes == REG_OK) regfree(&modlineRegex);
     if (normlineCompRes == REG_OK) regfree(&normlineRegex);
@@ -526,7 +675,11 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
 {
     *isWhitelistedRunning = FALSE;
     *isExclusiveRunning = FALSE;
-    if (nwhitelist == 0) return;
+    
+    if (nwhitelist == 0)
+    {
+        return;
+    }
 
     // Run the WQL Query.
     // TODO: instead of iterating over all processes, be informed when a process is created or destroyed. Some interesting reading material on that:
@@ -535,7 +688,11 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
     // https://docs.microsoft.com/en-us/windows/win32/wmisdk/example--receiving-event-notifications-through-wmi-?redirectedfrom=MSDN
     // If this is too difficult to do from C, I can write it in C++ and call it from C. It shouldn't be too hard to set up.
     IEnumWbemClassObject *enumWbem = NULL;
-    if (FAILED(cb.wbemServices->lpVtbl->ExecQuery(cb.wbemServices, L"WQL", L"SELECT CommandLine FROM Win32_Process", WBEM_FLAG_FORWARD_ONLY, NULL, &enumWbem))) return;
+
+    if (FAILED(cb.wbemServices->lpVtbl->ExecQuery(cb.wbemServices, L"WQL", L"SELECT CommandLine FROM Win32_Process", WBEM_FLAG_FORWARD_ONLY, NULL, &enumWbem)))
+    {
+        return;
+    }
 
     // Iterate over the enumerator.
     IWbemClassObject *result = NULL;
@@ -546,8 +703,16 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
         VARIANT commandLine;
 
         // Access the properties.
-        if (FAILED(result->lpVtbl->Get(result, L"CommandLine", 0, &commandLine, 0, 0))) goto next;
-        if (commandLine.vt == VT_NULL) goto next;
+        if (FAILED(result->lpVtbl->Get(result, L"CommandLine", 0, &commandLine, 0, 0)))
+        {
+            goto next;
+        }
+
+        if (commandLine.vt == VT_NULL)
+        {
+            VariantClear(&commandLine);
+            goto next;
+        }
 
         BSTR copy = SysAllocString(commandLine.bstrVal);
         BSTR whitespaceless = StripLeadingTrailingWhitespaceWide(copy);
@@ -558,8 +723,14 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
 
             if (IsMatchingCommandLine(whitespaceless, entry))
             {
-                if (entry->isExclusive) *isExclusiveRunning = TRUE;
-                else *isWhitelistedRunning = TRUE;
+                if (entry->isExclusive)
+                {
+                    *isExclusiveRunning = TRUE;
+                }
+                else
+                {
+                    *isWhitelistedRunning = TRUE;
+                }
 
                 LOG("Equality with %s process found:\n\tWhitelist: %ls\n\tProcess:   %ls",
                     entry->isExclusive ? "exclusive" : "whitelist",
@@ -568,12 +739,11 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
         }
 
         SysFreeString(copy);
-
+        VariantClear(&commandLine);
 next:
         result->lpVtbl->Release(result);
     }
 
-    // Release the resources.
     enumWbem->lpVtbl->Release(enumWbem);
 }
 
