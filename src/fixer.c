@@ -24,8 +24,10 @@
 #include <regex.h>      // For parsing the whitelist.
 #include <curl/curl.h>  // For sending requests to Shadowplay's local server which toggles recording on and off.
 
-// This came with the whitelisting function which I dare not touch.
-#define _WIN32_DCOM
+#define _WIN32_DCOM // This came with the whitelisting function which I dare not touch.
+#define POLLING_FREQUENCY_SEC 10
+#define POLLING_FREQUENCY_IN_CONFLICT_SEC 800
+#define MIN_STREAK_FOR_CONFLICT 3 // Must be >= 2.
 
 typedef struct
 {
@@ -82,6 +84,8 @@ static FixerCb cb = {0};
 
 void *FixerLoop(void *arg)
 {
+    int toggleStreak = 0;
+    
     // Making thread cancellable.
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -89,9 +93,9 @@ void *FixerLoop(void *arg)
     // Loading whitelist, shortcut, wmi, everything.
     LoadResources(TRUE);
 
-    for (;;)
+    for (int cycle = 0;; cycle++)
     {
-        sleep(10);
+        sleep(POLLING_FREQUENCY_SEC);
 
         pthread_mutex_lock(&glbl.lock);
         char isRefresh = glbl.isRefresh;
@@ -106,25 +110,47 @@ void *FixerLoop(void *arg)
             LoadResources(FALSE);
         }
 
-        if (isDisabled) continue;
+        if (isDisabled) goto end_streak_and_continue;
+
+        // If we find ourselves in conflict with some program that also tries to control Shadowplay,
+        // we'll "yield" by reducing the polling frequency so we don't fight it as much.
+        if (toggleStreak >= MIN_STREAK_FOR_CONFLICT)
+        {
+            // Skip most cycles, written this way because we can't just sleep for longer between cycles; I don't want to stall Refresh so much.
+            if ((cycle * POLLING_FREQUENCY_SEC) % POLLING_FREQUENCY_IN_CONFLICT_SEC != 0) continue;
+
+            // On cycles where we want to make an attempt despite being in a streak, we'll need 2 attempts to know if we are still in conflict.
+            toggleStreak = MIN_STREAK_FOR_CONFLICT - 2;
+            LOG("Attempting to break out of conflict. cycle=%d", cycle);
+        }
 
         char isInstantReplayOn = IsInstantReplayOn();
 
         // When these conditions are met there is no reason to waste cpu time polling running processes.
-        if (!cb.isExclusiveExists && isInstantReplayOn) continue;
+        if (!cb.isExclusiveExists && isInstantReplayOn) goto end_streak_and_continue;
 
         char isWhitelistedRunning, isExclusiveRunning;
         PollRunningProcesses(cb.whitelist, cb.nwhitelist, &isWhitelistedRunning, &isExclusiveRunning);
 
         // Whitelist disables AlwaysShadow, taking precedence over Exclusives list.
-        if (isWhitelistedRunning) continue;
+        if (isWhitelistedRunning) goto end_streak_and_continue;
 
         if ((!isInstantReplayOn && (!cb.isExclusiveExists || isExclusiveRunning)) || // Conditions for toggling ON.
             (isInstantReplayOn && cb.isExclusiveExists && !isExclusiveRunning)) // Conditions for toggling OFF.
         {
             LOG("Toggling because: isInstantReplayOn %d, isExclusiveExists %d, isExclusiveRunning %d", isInstantReplayOn, cb.isExclusiveExists, isExclusiveRunning);
             ToggleInstantReplay(isInstantReplayOn);
+
+            if (++toggleStreak == MIN_STREAK_FOR_CONFLICT)
+            {
+                LOG("Entered into conflict! cycle=%d", cycle);
+            }
+            
+            continue; // Skip ending the streak.
         }
+
+end_streak_and_continue:
+        toggleStreak = 0;
     }
     
     return 0;
