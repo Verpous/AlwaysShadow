@@ -178,7 +178,7 @@ publish:
 	git stash pop -q || true
 	git restore --staged .
 
-	gh release edit --draft $(TAG)
+	gh release edit --draft=false $(TAG)
 	git push origin $(VERSIONBRANCH) || { echo "****FAILED TO PUSH $(VERSIONFILE) AFTER PUBLISHING RELEASE. FIX THIS ASAP****"; false; }
 
 # Writes CFLAGS to a file only if it's changed from the last run. We use this to recompile binaries when changing to/from debug builds.
@@ -190,7 +190,7 @@ write_flagfile:
 # Support override of tags list for debugging purposes.
 ifeq ($(strip $(tags)),auto)
 write_tags:
-	gh release list --json tagName --jq '.[] | .tagName' 2> /dev/null | ./make_helpers.sh write_if_diff $(TAGSFILE)
+	gh release list --json tagName --jq '.[].tagName' 2> /dev/null | ./make_helpers.sh write_if_diff $(TAGSFILE)
 else
 write_tags:
 	printf '%s\n' $(tags) | ./make_helpers.sh write_if_diff $(TAGSFILE)

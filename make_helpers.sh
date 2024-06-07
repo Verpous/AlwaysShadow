@@ -19,7 +19,7 @@ write_if_diff() {
 
 latest_release() {
     # gh release view makes it easier to obtain the latest release, but it doesn't show draft releases.
-    gh release list --json "$1" --jq ".[0] | .$1"
+    gh release list --json "$1" --jq ".[0].$1"
 }
 
 # User runs "make_utils.sh <func name> <func args>", and we run the function with the args.
