@@ -30,6 +30,8 @@ This causes AlwaysShadow to only run while a process with "Hades.exe" *anywhere*
 
 `S` - Makes this line match any command lines of which it is a substring, as opposed to the default behavior where the lines must match exactly. This means that instead of copying long ugly command lines, you can pick a pretty part of the command line to use (like the exe). But **make sure** that the line won't also match things you don't want it to.
 
+`N` - Makes this line be matched against the name of the program executable instead of the command line. To find out a program's name, go to Task Manager same as above and enable "Process name".
+
 `I` - Makes this line be ignored. You can use this to add comments.
 
 The repo includes an example Whitelist.txt but **it is only for example**, as the exact command lines may be different on your PC.

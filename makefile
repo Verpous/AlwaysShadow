@@ -196,6 +196,7 @@ publish:
 
 	gh release edit --draft=false $(TAG)
 	git push origin $(VERSIONBRANCH) || { echo "****FAILED TO PUSH $(VERSIONFILE) AFTER PUBLISHING RELEASE. FIX THIS ASAP****"; false; }
+	@echo "Success!"
 
 # Writes CFLAGS to a file only if it's changed from the last run. We use this to recompile binaries when changing to/from debug builds.
 # Important that this target isn't simply called $(FLAGFILE), that's a different target which we use.
