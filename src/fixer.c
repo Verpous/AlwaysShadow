@@ -25,13 +25,29 @@
 #include <curl/curl.h>  // For sending requests to Shadowplay's local server which toggles recording on and off.
 
 #define _WIN32_DCOM // This came with the whitelisting function which I dare not touch.
+
+#define MIN_STREAK_FOR_CONFLICT 3 // Must be >= 2.
+
+// Support high frequency polling option for debugging.
+#ifdef HIGH_FREQUENCY_POLLING
+#define POLLING_FREQUENCY_SEC 5
+#define POLLING_FREQUENCY_IN_CONFLICT_SEC 30
+#else
 #define POLLING_FREQUENCY_SEC 10
 #define POLLING_FREQUENCY_IN_CONFLICT_SEC 800
-#define MIN_STREAK_FOR_CONFLICT 3 // Must be >= 2.
+#endif
+
+typedef enum
+{
+    PROCFIELD_NAME,
+    PROCFIELD_CMDLINE,
+    PROCFIELD_NUMOF,
+} ProcessField;
 
 typedef struct
 {
-    BSTR command;
+    BSTR checkValue;
+    ProcessField checkField;
     char isSubstring;
     char isExclusive;
 } WhitelistEntry;
@@ -73,7 +89,13 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist);
 static char IsExclusiveExists(WhitelistEntry *whitelist, size_t nwhitelist);
 static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, char *isWhitelistedRunning, char *isExclusiveRunning);
 static wchar_t *StripLeadingTrailingWhitespaceWide(wchar_t *str);
-static char IsMatchingCommandLine(BSTR command, WhitelistEntry *entry);
+static char IsWhitelistMatch(BSTR *fields, WhitelistEntry *entry);
+
+// Not just any str rep will do, it needs to be the name that Win32_Process knows the field by.
+static const wchar_t* procfield_str[] = {
+    [PROCFIELD_NAME]        L"Name",
+    [PROCFIELD_CMDLINE]     L"CommandLine",
+};
 
 static FixerCb cb = {0};
 
@@ -85,7 +107,8 @@ static FixerCb cb = {0};
 void *FixerLoop(void *arg)
 {
     int toggleStreak = 0;
-    
+    int conflictStart = 0;
+
     // Making thread cancellable.
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
     pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -116,8 +139,8 @@ void *FixerLoop(void *arg)
         // we'll "yield" by reducing the polling frequency so we don't fight it as much.
         if (toggleStreak >= MIN_STREAK_FOR_CONFLICT)
         {
-            // Skip most cycles, written this way because we can't just sleep for longer between cycles; I don't want to stall Refresh so much.
-            if ((cycle * POLLING_FREQUENCY_SEC) % POLLING_FREQUENCY_IN_CONFLICT_SEC != 0) continue;
+            // Skip many cycles, written this way because we can't just sleep for longer between cycles; I don't want to stall Refresh so much.
+            if ((cycle - conflictStart) * POLLING_FREQUENCY_SEC < POLLING_FREQUENCY_IN_CONFLICT_SEC) continue;
 
             // On cycles where we want to make an attempt despite being in a streak, we'll need 2 attempts to know if we are still in conflict.
             toggleStreak = MIN_STREAK_FOR_CONFLICT - 2;
@@ -138,12 +161,16 @@ void *FixerLoop(void *arg)
         if ((!isInstantReplayOn && (!cb.isExclusiveExists || isExclusiveRunning)) || // Conditions for toggling ON.
             (isInstantReplayOn && cb.isExclusiveExists && !isExclusiveRunning)) // Conditions for toggling OFF.
         {
-            LOG("Toggling because: isInstantReplayOn %d, isExclusiveExists %d, isExclusiveRunning %d", isInstantReplayOn, cb.isExclusiveExists, isExclusiveRunning);
-            ToggleInstantReplay(isInstantReplayOn);
+            LOG("Should toggle because: isInstantReplayOn %d, isExclusiveExists %d, isExclusiveRunning %d", isInstantReplayOn, cb.isExclusiveExists, isExclusiveRunning);
 
             if (++toggleStreak == MIN_STREAK_FOR_CONFLICT)
             {
-                LOG("Entered into conflict! cycle=%d", cycle);
+                LOG("Entered into conflict! Won't toggle. cycle=%d", cycle);
+                conflictStart = cycle;
+            }
+            else
+            {
+                ToggleInstantReplay(isInstantReplayOn);
             }
             
             continue; // Skip ending the streak.
@@ -218,7 +245,7 @@ static void ReleaseResources(char freeWmi)
 
     ReleaseCurlResources();
 
-    for (size_t i = 0; i < cb.nwhitelist; i++) SysFreeString(cb.whitelist[i].command);
+    for (size_t i = 0; i < cb.nwhitelist; i++) SysFreeString(cb.whitelist[i].checkValue);
     free(cb.whitelist);
     free(cb.inputs);
 
@@ -575,6 +602,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
         // We'll write the entry to this variable then create a dynamically allocated copy.
         // The reason is so if we get an error in the middle we don't have to worry about freeing that allocation.
         WhitelistEntry entry = {0};
+        entry.checkField = PROCFIELD_CMDLINE;
 
         // Plenty of array size just to be safe.
         regmatch_t matches[16];
@@ -604,6 +632,9 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
                         break;
                     case 'E':
                         entry.isExclusive = TRUE;
+                        break;
+                    case 'N':
+                        entry.checkField = PROCFIELD_NAME;
                         break;
                     case 'I':
                         // Keep iterating over flag characters even if this is a comment.
@@ -658,15 +689,15 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
             goto error;
         }
 
-        entry.command = SysAllocString(wbuffer);
+        entry.checkValue = SysAllocString(wbuffer);
 
         // Allocate new whitelist entry.
         whitelist = realloc(whitelist, ((*nwhitelist) + 1) * sizeof(*whitelist));
         whitelist[*nwhitelist] = entry;
         (*nwhitelist)++;
 
-        LOG("Added to the whitelist: line: %d, isSubstring: %d, isExclusive: %d, command length: %lld command: '%ls'.",
-            linenum, entry.isSubstring, entry.isExclusive, wcslen(wbuffer), wbuffer);
+        LOG("Added to the whitelist: line: %d, isSubstring: %d, isExclusive: %d, field: %ls, value length: %lld value: '%ls'.",
+            linenum, entry.isSubstring, entry.isExclusive, procfield_str[entry.checkField], wcslen(wbuffer), wbuffer);
     }
 
     // Skip bad.
@@ -674,7 +705,7 @@ static WhitelistEntry *FetchWhitelist(LPTSTR filename, size_t *nwhitelist)
 
 error:
     // Safe to pass NULL to SysFreeString (also to free).
-    for (size_t i = 0; whitelist != NULL && i < *nwhitelist; i++) SysFreeString(whitelist[i].command);
+    for (size_t i = 0; whitelist != NULL && i < *nwhitelist; i++) SysFreeString(whitelist[i].checkValue);
     free(whitelist);
     *nwhitelist = 0;
     whitelist = NULL;
@@ -715,7 +746,8 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
     // If this is too difficult to do from C, I can write it in C++ and call it from C. It shouldn't be too hard to set up.
     IEnumWbemClassObject *enumWbem = NULL;
 
-    if (FAILED(cb.wbemServices->lpVtbl->ExecQuery(cb.wbemServices, L"WQL", L"SELECT CommandLine FROM Win32_Process", WBEM_FLAG_FORWARD_ONLY, NULL, &enumWbem)))
+    // CBA to compose this string using procfield_str.
+    if (FAILED(cb.wbemServices->lpVtbl->ExecQuery(cb.wbemServices, L"WQL", L"SELECT Name,CommandLine FROM Win32_Process", WBEM_FLAG_FORWARD_ONLY, NULL, &enumWbem)))
     {
         return;
     }
@@ -726,28 +758,33 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
 
     while (enumWbem->lpVtbl->Next(enumWbem, WBEM_INFINITE, 1, &result, &returnedCount) == S_OK)
     {
-        VARIANT commandLine;
+        VARIANT field_variants[PROCFIELD_NUMOF];
+        BSTR field_bstrs[PROCFIELD_NUMOF] = {0};
+        BSTR field_trimmed_bstrs[PROCFIELD_NUMOF] = {0};
 
-        // Access the properties.
-        if (FAILED(result->lpVtbl->Get(result, L"CommandLine", 0, &commandLine, 0, 0)))
+        for (int i = 0; i < PROCFIELD_NUMOF; i++)
         {
-            goto next;
-        }
+            if (FAILED(result->lpVtbl->Get(result, procfield_str[i], 0, &field_variants[i], 0, 0)))
+            {
+                // Mark failed fields empty so we know not to free them.
+                field_variants[i].vt = VT_EMPTY;
+                continue;
+            }
 
-        if (commandLine.vt == VT_NULL)
-        {
-            VariantClear(&commandLine);
-            goto next;
-        }
+            if (field_variants[i].vt == VT_NULL) {
+                // the bstr arrays default to NULL so leave it that way in this case.
+                continue;
+            }
 
-        BSTR copy = SysAllocString(commandLine.bstrVal);
-        BSTR whitespaceless = StripLeadingTrailingWhitespaceWide(copy);
+            field_bstrs[i] = SysAllocString(field_variants[i].bstrVal);
+            field_trimmed_bstrs[i] = StripLeadingTrailingWhitespaceWide(field_bstrs[i]);
+        }
 
         for (size_t i = 0; i < nwhitelist; i++)
         {
             WhitelistEntry *entry = &whitelist[i];
 
-            if (IsMatchingCommandLine(whitespaceless, entry))
+            if (IsWhitelistMatch(field_trimmed_bstrs, entry))
             {
                 if (entry->isExclusive)
                 {
@@ -757,16 +794,15 @@ static void PollRunningProcesses(WhitelistEntry *whitelist, size_t nwhitelist, c
                 {
                     *isWhitelistedRunning = TRUE;
                 }
-
-                LOG("Equality with %s process found:\n\tWhitelist: %ls\n\tProcess:   %ls",
-                    entry->isExclusive ? "exclusive" : "whitelist",
-                    entry->command, commandLine.bstrVal);
             }
         }
 
-        SysFreeString(copy);
-        VariantClear(&commandLine);
-next:
+        for (int i = 0; i < PROCFIELD_NUMOF; i++)
+        {
+            if (field_bstrs[i] != NULL) SysFreeString(field_bstrs[i]);
+            if (field_variants[i].vt != VT_EMPTY) VariantClear(&field_variants[i]);
+        }
+
         result->lpVtbl->Release(result);
     }
 
@@ -787,16 +823,33 @@ static wchar_t *StripLeadingTrailingWhitespaceWide(wchar_t *str)
     return str;
 }
 
-static char IsMatchingCommandLine(BSTR command, WhitelistEntry *entry)
+static char IsWhitelistMatch(BSTR *fields, WhitelistEntry *entry)
 {
+    BSTR field = fields[entry->checkField];
+    char isMatch;
+
+    if (field == NULL)
+    {
+        return FALSE;
+    }
+
     if (entry->isSubstring)
     {
-        return wcsstr(command, entry->command) != NULL;
+        isMatch = wcsstr(field, entry->checkValue) != NULL;
     }
     else
     {
-        return wcscmp(command, entry->command) == 0;
+        isMatch = wcscmp(field, entry->checkValue) == 0;
     }
+
+    if (isMatch)
+    {
+        LOG("Whitelist match! list type: %s, field: %ls,\n\tWhitelist: %ls\n\tProcess:   %ls",
+            entry->isExclusive ? "exclusive" : "whitelist", procfield_str[entry->checkField],
+            entry->checkValue, field);
+    }
+
+    return isMatch;
 }
 
 #pragma endregion // Whitelisting.

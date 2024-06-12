@@ -19,6 +19,8 @@ BIN:=bin
 SRC:=src
 INCL:=include
 RESRC:=resources
+WHITELISTS:=whitelists
+WHITELIST_BIN:=$(BIN)/Whitelist.txt
 PROG:=$(BIN)/AlwaysShadow.exe
 RELEASE:=$(BIN)/AlwaysShadow.zip
 FLAGFILE:=$(BIN)/cflags.txt
@@ -30,6 +32,8 @@ VERSIONBRANCH:=version
 GITHUB_NAME_WITH_OWNER:=$(shell gh repo view --json nameWithOwner --jq '.[]' 2> /dev/null || echo Verpous/AlwaysShadow)
 
 YELLOW_FG:=$(shell tput setaf 3)
+PURPLE_FG:=$(shell tput setaf 5)
+CYAN_FG:=$(shell tput setaf 6)
 NOCOLOR:=$(shell tput sgr0)
 
 # Auto detect files we want to compile.
@@ -76,7 +80,7 @@ LIBS += -lregex
 LIBS += -ltre
 LIBS += -lintl
 
-# Output by `pkg-config --libs --static libcurl`. It's libcurl and all its dependencies.
+# Output of `pkg-config --libs --static libcurl`. It's libcurl and all its dependencies.
 LIBS += -lcurl
 LIBS += -lidn2
 LIBS += -lssh2
@@ -109,10 +113,19 @@ ifeq ($(strip $(debug)),yes)
 endif
 
 # If not empty, use this tag instead of downloading the latest one from curl (for debugging).
-latest_tag = 
+latest_tag =
 ifneq ($(strip $(latest_tag)),)
 	CFLAGS += -D LATEST_TAG_OVERRIDE=\"$(latest_tag)\"
 endif
+
+# yes/no to high frequency polling for debugging.
+highfreq = no
+ifeq ($(strip $(debug)),yes)
+	CFLAGS += -D HIGH_FREQUENCY_POLLING
+endif
+
+# If empty, use no whitelist in make run. If it's the name of a sample whitelist we have, use that. Else, generate a whitelist with these contents.
+whitelist=
 
 # Either auto or a space-separated list of tags to function as the list of tags which existed when this build was compiled.
 tags = auto
@@ -122,8 +135,10 @@ PRINT_VARS += unicode
 PRINT_VARS += debug
 PRINT_VARS += tags
 PRINT_VARS += latest_tag
+PRINT_VARS += highfreq
+PRINT_VARS += whitelist
 
-.PHONY: all release release_pre_build publish run runx log write_flagfile write_tags clean
+.PHONY: all release release_pre_build publish run runx log whitelists write_flagfile write_tags clean
 
 # Makes a build. Order is important.
 all: $(patsubst %,printvar-%,$(PRINT_VARS)) write_flagfile write_tags $(PROG)
@@ -141,6 +156,7 @@ release: clean release_pre_build all
 	@echo "Release is ready as a draft. Go to GitHub, inspect it, run make publish when you're ready."
 
 # Part of make release, do not run this directly. It's things we want to do before "all" (must create the new tag before "all" calls write_tags).
+# Note: would've been nicer to put this in a make_helpers function but I kinda like that make quits if any commands fail.
 release_pre_build:
 	gh release list
 
@@ -148,7 +164,7 @@ release_pre_build:
 		./make_helpers.sh confirm "Detected that the lastest release is already a draft. Delete it?" && gh release delete $$(./make_helpers.sh latest_release tagName);\
 	fi
 
-	@echo "Reminder: usually tags are of the form 'v1.x', and titles are 'AlwaysShadow v1.x'"
+	@echo "REMINDER: usually tags are of the form 'v1.x', and titles are 'AlwaysShadow v1.x'"
 	@echo "Prerelease no, draft YES ABSOLUTELY!"
 	gh release create --draft --prerelease=false
 
@@ -200,12 +216,22 @@ endif
 run: all runx
 
 # "Run exclusively". Same as run, but won't try to compile it.
+# Also creates a whitelist in the bin folder, support both copying one of the sample files or creating one on the fly.
 runx:
+	if [[ -f "$(WHITELISTS)/$(whitelist)" ]]; then cp "$(WHITELISTS)/$(whitelist)" $(WHITELIST_BIN);\
+	elif [[ "$(whitelist)" ]]; then echo -n "$(whitelist)" > $(WHITELIST_BIN);\
+	else rm -f $(WHITELIST_BIN); fi
 	$(PROG) & pid=$$!; ./make_helpers.sh confirm "Press Y when you're ready to kill it..." && kill $$pid
 
 # View latest logs as they come.
 log:
 	tail -f "$$LOCALAPPDATA"/AlwaysShadow/output.log
+
+# View which sample whitelists we have to choose from.
+# Special treatment for "empty" because we can't grep it.
+whitelists:
+	@printf %s "$(PURPLE_FG)" empty "$(CYAN_FG)" : "$(NOCOLOR)"; printf "\n"
+	@cd $(WHITELISTS); grep -E --color '' *
 
 # Deletes values stored in the registry and empties the bin folder.
 clean:
