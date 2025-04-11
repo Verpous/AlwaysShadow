@@ -22,7 +22,7 @@
 #endif
 
 #define _LOG_ONLY_INTERNAL(lvl, fmt, ...) \
-    fprintf(glbl.logfile, "[%s] %s %s:%s:%d: " fmt "\n", (lvl), GetDateTimeStr(), __BASE_FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+    fprintf(glbl.logfile, "[%s] %s %s:%s:%d: " fmt "\n", (lvl), GetDateTimeStaticStr(), __BASE_FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 
 #define _LOG_INTERNAL(lvl, fmt, ...)                    \
     do {                                                \
@@ -96,6 +96,7 @@ extern const char *tags[];
 extern const size_t tagsLen;
 
 void *FixerLoop(void *arg);
-char *GetDateTimeStr();
+char *GetDateTimeStaticStr();
+char *GetLastErrorStaticStr();
 
 #endif

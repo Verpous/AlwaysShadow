@@ -124,28 +124,30 @@ ifeq ($(strip $(debug)),yes)
 	CFLAGS += -D HIGH_FREQUENCY_POLLING
 endif
 
-# If empty, use no whitelist in make run. If it's the name of a sample whitelist we have, use that. Else, generate a whitelist with these contents.
-whitelist=
-
 # Either auto or a space-separated list of tags to function as the list of tags which existed when this build was compiled.
 tags = auto
 
-# List variables we want to print before compilation.
+# Which command to use for opening the logs. Will probably only ever use this default or "less".
+view = tail -f
+
+# If empty, use no whitelist in make run. If it's the name of a sample whitelist we have, use that. Else, generate a whitelist with these contents.
+# Note: make won't let this variable be equal to spaces but not empty.
+whitelist = 
+
+# Print these variables.
 PRINT_VARS += unicode
 PRINT_VARS += debug
 PRINT_VARS += tags
 PRINT_VARS += latest_tag
 PRINT_VARS += highfreq
+PRINT_VARS += view
 PRINT_VARS += whitelist
+$(foreach var,$(PRINT_VARS),$(info $(shell printf "%s%-20s%s = %s\n" "$(YELLOW_FG)" "$(var)" "$(NOCOLOR)" "$($(var))")))
 
-.PHONY: all release release_pre_build publish run runx log whitelists write_flagfile write_tags clean
+.PHONY: all release release_pre_build publish run runx log whitelists write_flagfile write_tags clean help
 
 # Makes a build. Order is important.
-all: $(patsubst %,printvar-%,$(PRINT_VARS)) write_flagfile write_tags $(PROG)
-
-# Prints a variable for debug purposes. Adding these rules to .PHONY makes them not run for some reason.
-printvar-%:
-	@printf "%s%-20s%s = %s\n" "$(YELLOW_FG)" "$*" "$(NOCOLOR)" "$($*)"
+all: write_flagfile write_tags $(PROG)
 
 # Creates a release inside a zip and pushes it to GitHub.
 release: clean release_pre_build all
@@ -226,7 +228,7 @@ runx:
 
 # View latest logs as they come.
 log:
-	tail -f "$$LOCALAPPDATA"/AlwaysShadow/output.log
+	$(view) "$$LOCALAPPDATA"/AlwaysShadow/output.log
 
 # View which sample whitelists we have to choose from.
 # Special treatment for "empty" because we can't grep it.

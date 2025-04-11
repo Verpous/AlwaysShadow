@@ -26,7 +26,8 @@
 
 #define _WIN32_DCOM // This came with the whitelisting function which I dare not touch.
 
-#define MIN_STREAK_FOR_CONFLICT 3 // Must be >= 2.
+#define MIN_STREAK_FOR_CONFLICT 3
+_Static_assert(MIN_STREAK_FOR_CONFLICT >= 2, "At least 2 attempts (1 retry) are needed to identify a conflict.");
 
 // Support high frequency polling option for debugging.
 #ifdef HIGH_FREQUENCY_POLLING
@@ -306,7 +307,7 @@ static char FetchServerInfo(CURL **handleOut, struct curl_slist **headersOut)
 
     if (mapHandle == NULL)
     {
-        LOG_WARN("Failed to open the file with the port and secret, error code: %#lx", GetLastError());
+        LOG_WARN("Failed to open the file with the port and secret, error: %s", GetLastErrorStaticStr());
         goto error;
     }
 
@@ -314,7 +315,7 @@ static char FetchServerInfo(CURL **handleOut, struct curl_slist **headersOut)
 
     if (mapView == NULL)
     {
-        LOG_WARN("Failed to map view of the file with the port and secret, error code: %#lx", GetLastError());
+        LOG_WARN("Failed to map view of the file with the port and secret, error: %s", GetLastErrorStaticStr());
         goto error;
     }
 
@@ -476,6 +477,7 @@ static void CreateInput(INPUT *input, WORD vkey, char isDown)
 
 static void ToggleInstantReplayByKeyboardShortcut()
 {
+    LOG("Toggling by keyboard shortcut.");
     SendInput((UINT)cb.ninputs, cb.inputs, sizeof(INPUT));
 }
 

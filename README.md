@@ -18,6 +18,8 @@ To find out a program's command line, run it and go to the Task Manager. Right c
 
 Once enabled, Task Manager will show each process's command line. Run the process you want to add to the list, find it in the Task Manager, and copy-paste its command line to your Whitelist.txt in its own line.
 
+### Advanced whitelisting
+
 The whitelist supports a few additional, more advanced features. Each line in the whitelist may begin with an expression of the form: `??<flags> `. That is, a `??`, followed by one or more flag characters, and then a space character. The flag characters modify the behavior of the line. For example, your whitelist may contain the following line:
 
 ```
@@ -42,13 +44,13 @@ You will need to refresh this program (click the icon in the notification bar an
 1. Change the shortcut for toggling Instant Replay on/off in your GeForce Experience settings
 2. Create, delete, or modify your Whitelist.txt file
 
-AlwaysShadow may turn on Instant Replay by simulating the keypresses for the shortcut that toggles it in GeForce Experience, which by default is Alt+Shift+F10. This is only a fallback method and may be rare, but it can cause AlwaysShadow to change your keyboard language because the default shortcut for cycling between languages in Windows is Alt+Shift. To resolve this issue, it is recommended to go to your GeForce Experience settings and change the shortcut for toggling Instant Replay. I use Ctrl+Shift+F10. Remember that after changing the shortcut you will need to exit and relaunch this program.
+AlwaysShadow may (but usually won't) turn on Instant Replay by simulating the keypresses for the shortcut that toggles it in GeForce Experience, which by default is Alt+Shift+F10. This can cause AlwaysShadow to change your keyboard language because the default shortcut for cycling between languages in Windows is Alt+Shift. To resolve this issue, it is recommended to go to your GeForce Experience settings and change the shortcut for toggling Instant Replay. I use Ctrl+Shift+F10. Remember that after changing the shortcut you will need to exit and relaunch this program.
 
 Some programs (Netflix for example) may run in the background at all times, which means if you whitelist them AlwaysShadow will see them as always running. You can disable these programs running in the background in [Windows settings](https://support.microsoft.com/en-us/windows/windows-background-apps-and-your-privacy-83f2de44-d2d9-2b29-4649-2afe0913360a).
 
 ## Download
 
-Simply go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and download the latest version, or any previous one. And of course, you can always clone the repo and compile it yourself.
+Simply go to [Releases](https://github.com/Verpous/AlwaysShadow/releases) and download the latest version, or any previous one. And of course, you can always clone the repo and compile it yourself!
 
 ## Compilation instructions
 

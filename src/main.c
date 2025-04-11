@@ -51,7 +51,7 @@
 #define STARTUP_REGISTRY_KEY HKEY_CURRENT_USER, TEXT("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
 #define STARTUP_REGISTRY_VAL PROGRAM_NAME
 
-// Key + subkey for the registry path where we register to run at startup.
+// Key + subkey for the registry path where we store the user's setting for checking for updates.
 #define UPDATES_REGISTRY_KEY HKEY_CURRENT_USER, TEXT("Software\\AlwaysShadow")
 #define UPDATES_REGISTRY_VAL TEXT("DontCheckForUpdates")
 
@@ -265,7 +265,7 @@ static void InitializeCwd()
 
     if (!SetCurrentDirectory(path))
     {
-        LOG_WARN("Failed to set CWD with error code: %#lx, path: " TCS_FMT, GetLastError(), path);
+        LOG_WARN("Failed to set CWD with error: %s, path: " TCS_FMT, GetLastErrorStaticStr(), path);
         return;
     }
 
@@ -273,14 +273,25 @@ static void InitializeCwd()
 }
 
 // Do not hold on to the returned string as it will change next time you call this function.
-char *GetDateTimeStr()
+char *GetDateTimeStaticStr()
 {
     static __thread char str[1 << 8];
-    time_t timestamp = time(NULL);
-    struct tm timeData;
-    localtime_s(&timeData, &timestamp); // localtime is not thread safe!
-    strftime(str, sizeof(str), "%Y-%m-%d %H:%M:%S", &timeData);
-    str[_countof(str) - 1] = '\0';
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    sprintf(str, "%04d-%02d-%02d %02d:%02d:%02d.%03d",
+        st.wYear, st.wMonth, st.wDay,
+        st.wHour, st.wMinute, st.wSecond,
+        st.wMilliseconds);
+    return str;
+}
+
+// Do not hold on to the returned string as it will change next time you call this function.
+char *GetLastErrorStaticStr()
+{
+    static __thread char str[1 << 8];
+    DWORD err = GetLastError();
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, err, 0, (LPSTR)&str, _countof(str), NULL);
     return str;
 }
 
@@ -293,6 +304,7 @@ static void InitializeWindows(HINSTANCE instanceHandle)
 
 static void RegisterMainWindowClass(HINSTANCE instanceHandle)
 {
+    char *error;
     WNDCLASS mainWindowClass = {0};
     mainWindowClass.hInstance = instanceHandle;
     mainWindowClass.lpszClassName = WC_MAINWINDOW;
@@ -302,8 +314,9 @@ static void RegisterMainWindowClass(HINSTANCE instanceHandle)
     // Registering this class. If it fails, we'll log it and end the program.
     if (!RegisterClass(&mainWindowClass))
     {
-        LOG_ERROR("RegisterClass of main window failed with error code: %#lx", GetLastError());
-        PANIC(TEXT("Error initializing the program: RegisterClass error %#lx. Quitting."), GetLastError());
+        error = GetLastErrorStaticStr();
+        LOG_ERROR("RegisterClass of main window failed with error: %s", error);
+        PANIC(TEXT("Error initializing the program: RegisterClass error: %hs Quitting."), error);
     }
 }
 
@@ -782,8 +795,8 @@ static void SquelchUpdates()
         return;
     }
 
-    // Squelch updates for a month.
-    time_t squelchDate = time(NULL) + 60 * 60 * 24 * 30;
+    // Squelch updates for 2 months.
+    time_t squelchDate = time(NULL) + 60 * 60 * 24 * 30 * 2;
     ret = RegSetValueEx(hkey, SQUELCH_DATE_REGISTRY_VAL, 0, REG_QWORD, (BYTE *)&squelchDate, sizeof(squelchDate));
 
     if (ret != ERROR_SUCCESS)
@@ -1081,7 +1094,7 @@ static int GetSelection(HWND dialog, int id)
 
     if (selection == LB_ERR)
     {
-        LOG_WARN("Got LB_ERR for %#x, error code %#lx (could just mean the user didn't select seconds/minutes/hours)", id, GetLastError());
+        LOG_WARN("Got LB_ERR for %#x, error: %s (could just mean the user didn't select seconds/minutes/hours)", id, GetLastErrorStaticStr());
         selection = 0;
     }
 
