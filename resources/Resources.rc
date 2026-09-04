@@ -54,3 +54,5 @@ CAPTION "Choose duration"
     PUSHBUTTON "OK", APPLY_PICKER_BTN_ID,       34,     90,     35,     15
     PUSHBUTTON "Cancel", CANCEL_PICKER_BTN_ID,  76,     90,     35,     15
 }
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "Manifest.manifest"
